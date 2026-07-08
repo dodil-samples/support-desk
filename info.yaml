@@ -1,0 +1,58 @@
+name: support-desk
+description: >
+  Zendesk-style shared inbox on Ignite + K3. Tickets and messages live in the K3 SQL
+  warehouse, full bodies and KB articles are objects, and a vector collection powers
+  suggested answers. One action-routed Python function.
+runtime: python
+mcp_enabled: true
+
+input:
+  type: object
+  required: [action]
+  properties:
+    action:
+      type: string
+      # PUBLIC (anon-safe): submit_ticket, ticket_status, search_kb
+      # PRIVATE (admin key): create_ticket, add_message, triage, suggest_reply, add_kb,
+      #   get_ticket, list_tickets, set_status, assign, rate, stats, export_tickets,
+      #   create_key, list_keys, revoke_key
+      enum: [submit_ticket, ticket_status, search_kb,
+             create_ticket, add_message, triage, suggest_reply, add_kb,
+             get_ticket, list_tickets, set_status, assign, rate, stats, export_tickets,
+             create_key, list_keys, revoke_key]
+    key:
+      type: string
+      description: >
+        API key in the request body. A project (public) key authorizes PUBLIC
+        actions; an admin key authorizes PRIVATE actions. Omit when the app's key
+        tiers are unconfigured (open).
+    subject: { type: string }
+    body: { type: string }
+    requester_email: { type: string }
+    channel: { type: string }
+    ticket_id: { type: string }
+    query: { type: string }
+    status: { type: string }
+    assignee: { type: string }
+
+output:
+  type: object
+  properties:
+    ok: { type: boolean }
+    action: { type: string }
+    result: { type: object }
+
+env:
+  - DODIL_SA_ID
+  - DODIL_SA_SECRET
+  # Public/private gate (see lib/gate.py). Comma-separated. If a tier has no key
+  # configured (env + api_keys table both empty), that tier is open.
+  - ADMIN_KEYS      # authorizes PRIVATE actions (agent inbox, admin, key mgmt)
+  - PUBLIC_KEYS     # authorizes PUBLIC actions (submit_ticket, ticket_status, search_kb)
+
+test_input:
+  action: create_ticket
+  subject: "Charged twice for order #8891"
+  body: "I was billed $129 twice this morning. Please refund the duplicate."
+  requester_email: "sam@acme.io"
+  channel: email

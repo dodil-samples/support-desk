@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Support Desk — dashboard</title>
+<style>
+  :root {
+    --surface:#fcfcfb; --plane:#f9f9f7; --ink:#0b0b0b; --ink2:#52514e; --muted:#898781;
+    --grid:#e1e0d9; --axis:#c3c2b7; --accent:#2a78d6; --accent-soft:#cde2fb;
+    --good:#0ca30c; --warn:#fab219; --serious:#ec835a; --crit:#d03b3b;
+    --border:rgba(11,11,11,0.10);
+    --font: system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --surface:#1a1a19; --plane:#0d0d0d; --ink:#fff; --ink2:#c3c2b7; --muted:#898781;
+      --grid:#2c2c2a; --axis:#383835; --accent:#3987e5; --accent-soft:#184f95;
+      --border:rgba(255,255,255,0.10);
+    }
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--plane); color:var(--ink); font-family:var(--font); font-size:14px; line-height:1.5; }
+  code { font-size:12px; }
+  .wrap { max-width:980px; margin:0 auto; padding:20px 16px 64px; }
+  header.top { display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+               padding-bottom:12px; border-bottom:1px solid var(--border); margin-bottom:20px; }
+  header.top h1 { font-size:18px; margin:0; font-weight:700; }
+  .badge { font-size:11px; padding:2px 8px; border-radius:999px; border:1px solid var(--border);
+           color:var(--ink2); background:var(--surface); }
+  .badge.anon { color:var(--good); border-color:color-mix(in srgb, var(--good) 40%, transparent); }
+  .spacer { flex:1; }
+  button, input, select, textarea { font-family:var(--font); font-size:13px; }
+  button { cursor:pointer; border:1px solid var(--border); background:var(--surface); color:var(--ink);
+           padding:7px 12px; border-radius:8px; }
+  button.primary { background:var(--accent); color:#fff; border-color:transparent; }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  input, select, textarea { background:var(--surface); color:var(--ink); border:1px solid var(--border);
+                  border-radius:8px; padding:7px 10px; width:100%; }
+  textarea { min-height:64px; resize:vertical; }
+  .card { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:16px; margin-bottom:16px; }
+  .card h2 { font-size:13px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); margin:0 0 12px; font-weight:600; }
+  .card h2 .sub { text-transform:none; letter-spacing:0; color:var(--ink2); font-weight:400; }
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+  @media (max-width:720px) { .grid2 { grid-template-columns:1fr; } }
+  .fld { display:flex; flex-direction:column; gap:3px; font-size:12px; color:var(--muted); margin-bottom:8px; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .muted { color:var(--muted); } .err { color:var(--crit); } .ok { color:var(--good); }
+  .tiles { display:grid; grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); gap:12px; }
+  .tile { background:var(--plane); border:1px solid var(--border); border-radius:10px; padding:12px 14px; }
+  .tile .v { font-size:24px; font-weight:700; } .tile .l { font-size:12px; color:var(--muted); }
+  .bars { display:flex; flex-direction:column; gap:7px; }
+  .bar-row { display:grid; grid-template-columns:110px 1fr auto; gap:10px; align-items:center; }
+  .bar-row .name { color:var(--ink2); display:flex; align-items:center; gap:6px; }
+  .dot { width:9px; height:9px; border-radius:50%; flex:0 0 auto; }
+  .bar-track { background:var(--plane); border-radius:5px; height:18px; overflow:hidden; }
+  .bar-fill { height:100%; background:var(--accent); border-radius:5px; min-width:2px; }
+  .bar-row .val { font-variant-numeric:tabular-nums; color:var(--ink2); font-size:12px; }
+  pre.out { background:var(--plane); border:1px solid var(--border); border-radius:8px; padding:10px;
+            overflow:auto; font-size:12px; max-height:240px; margin:8px 0 0; }
+  .hidden { display:none; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th, td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--border); }
+  th { color:var(--muted); font-weight:600; font-size:11px; text-transform:uppercase; letter-spacing:.03em; }
+  .pill { font-size:11px; padding:1px 7px; border-radius:999px; border:1px solid var(--border); color:var(--ink2); }
+  .kb-hit { border:1px solid var(--border); border-radius:8px; padding:8px 10px; margin-bottom:6px; background:var(--plane); }
+  .settings { display:none; gap:8px; flex-wrap:wrap; margin-top:10px; }
+  .settings.open { display:flex; }
+  .grow { flex:1 1 160px; min-width:120px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <h1>Support Desk</h1>
+    <span class="badge anon" id="modeBadge">public · anon invocation</span>
+    <span class="spacer"></span>
+    <button id="gear" title="Connection settings">⚙ Settings</button>
+  </header>
+
+  <div class="settings card" id="settings">
+    <label class="fld grow">App URL (anon FQDN)
+      <input id="cfgUrl" placeholder="https://support-desk-ORG.ignite.dodil.cloud/" />
+    </label>
+    <label class="fld grow">Project key (public)
+      <input id="cfgPk" placeholder="pk_… (optional)" />
+    </label>
+    <label class="fld grow">Admin key (agent inbox)
+      <input id="cfgAk" type="password" placeholder="ak_… unlocks the inbox" />
+    </label>
+    <div class="row" style="align-items:flex-end"><button class="primary" id="cfgSave">Save</button></div>
+  </div>
+
+  <!-- PUBLIC: help center -->
+  <section class="card">
+    <h2>Help center <span class="sub">— public: search KB · submit a ticket · check status</span></h2>
+    <div class="grid2">
+      <div>
+        <div class="fld">Search the knowledge base
+          <div class="row"><input id="kbQ" class="grow" placeholder="e.g. duplicate charge refund" value="refund" />
+            <button id="kbBtn">Search</button></div>
+        </div>
+        <div id="kbOut"></div>
+      </div>
+      <div>
+        <div class="fld">Submit a ticket
+          <input id="tSubject" placeholder="Subject" value="Charged twice for order #8891" />
+          <textarea id="tBody" placeholder="Describe the issue">I was billed $129 twice this morning. Please refund the duplicate.</textarea>
+          <input id="tEmail" placeholder="your email" value="sam@acme.io" />
+          <div class="row"><button class="primary" id="tSend">Submit</button></div>
+        </div>
+        <pre class="out hidden" id="tOut"></pre>
+        <div class="fld" style="margin-top:8px">Check ticket status
+          <div class="row"><input id="sId" class="grow" placeholder="ticket_id" />
+            <input id="sEmail" class="grow" placeholder="email" value="sam@acme.io" />
+            <button id="sBtn">Check</button></div>
+        </div>
+        <pre class="out hidden" id="sOut"></pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- PRIVATE: agent inbox -->
+  <section class="card">
+    <h2>Agent inbox <span class="sub">— private, admin key required</span></h2>
+    <div class="row form" style="margin-bottom:10px">
+      <button id="loadInbox">Load inbox</button>
+      <select id="statusFilter">
+        <option value="">all statuses</option>
+        <option value="new">new</option><option value="open">open</option>
+        <option value="pending">pending</option><option value="solved">solved</option>
+      </select>
+      <span class="muted" id="adminHint">Set an admin key in ⚙ Settings to unlock.</span>
+    </div>
+    <div id="stats" class="hidden">
+      <div class="tiles" id="statTiles"></div>
+      <div style="margin-top:16px"><div class="muted" style="font-size:12px;margin-bottom:6px">Open by priority</div>
+        <div class="bars" id="priorityBars"></div></div>
+    </div>
+    <div id="queueWrap" class="hidden" style="margin-top:16px">
+      <div class="muted" style="font-size:12px;margin-bottom:6px">Queue</div>
+      <div style="overflow:auto"><table id="queue"></table></div>
+    </div>
+    <pre class="out hidden err" id="inboxErr"></pre>
+  </section>
+
+  <p class="muted" style="font-size:12px">
+    Every call is an anonymous POST to the app's public FQDN (<code id="urlEcho"></code>).
+    The help center is public; the agent inbox requires an admin key (the gate is
+    enforced in the app). A CRM inbound-email webhook opens tickets via
+    <code>web/collector.mjs</code>.
+  </p>
+</div>
+<script src="./app.js"></script>
+</body>
+</html>

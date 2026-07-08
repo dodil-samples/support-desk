@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Local env / secrets
+.env
+*.env.local
+
+# Logs
+*.log
+
+# Node (web/collector.mjs is zero-dependency, but just in case)
+node_modules/
+
+# OS
+.DS_Store
