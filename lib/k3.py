@@ -194,15 +194,28 @@ class K3:
             self._deadline = None
 
     def vector_search(self, query: str, top_k: int = 5, min_score: float | None = None) -> list[dict]:
+        # Vector search embeds the query (model inference, ~0.7s warm) and can hit a
+        # Milvus cold segment-load (~5-10s) on an idle collection. Give it a dedicated
+        # timeout and retry once: a cold-load / saturated-embedder first attempt warms
+        # things so the retry returns fast. Best-effort — degrade to [] on failure.
+        timeout = float(os.getenv("K3_VECTOR_TIMEOUT", "20"))
         body = {"bucket": self.bucket, "text": query, "top_k": top_k, "include_content": True}
         if min_score is not None:
             body["min_score"] = min_score
-        status, data = http.request_json(
-            "POST", f"{BASE}/{self.bucket}/vector/search",
-            headers=self._headers(), json_body=body, timeout=60,
-        )
-        # Vector is best-effort — degrade to empty instead of failing the request.
-        if status >= 300 or not isinstance(data, dict):
+        data = None
+        for attempt in (1, 2):
+            try:
+                status, data = http.request_json(
+                    "POST", f"{BASE}/{self.bucket}/vector/search",
+                    headers=self._headers(), json_body=body, timeout=timeout,
+                )
+                if status < 300 and isinstance(data, dict):
+                    break
+            except Exception:
+                data = None  # timeout/abort — one more try
+            if attempt == 2:
+                return []
+        if not isinstance(data, dict):
             return []
         out = []
         for m in data.get("results") or []:
