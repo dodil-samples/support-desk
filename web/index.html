@@ -42,6 +42,9 @@
   .card h2 { font-size:13px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); margin:0 0 12px; font-weight:600; }
   .card h2 .sub { text-transform:none; letter-spacing:0; color:var(--ink2); font-weight:400; }
   .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+  /* grid/flex items default to min-width:auto, so wide content forces the track
+     wider and breaks the layout — let them shrink below their content width. */
+  .grid2 > * { min-width:0; }
   @media (max-width:720px) { .grid2 { grid-template-columns:1fr; } }
   .fld { display:flex; flex-direction:column; gap:3px; font-size:12px; color:var(--muted); margin-bottom:8px; }
   .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
@@ -57,7 +60,8 @@
   .bar-fill { height:100%; background:var(--accent); border-radius:5px; min-width:2px; }
   .bar-row .val { font-variant-numeric:tabular-nums; color:var(--ink2); font-size:12px; }
   pre.out { background:var(--plane); border:1px solid var(--border); border-radius:8px; padding:10px;
-            overflow:auto; font-size:12px; max-height:240px; margin:8px 0 0; }
+            overflow:auto; font-size:12px; max-height:240px; margin:8px 0 0;
+            white-space:pre-wrap; word-break:break-word; overflow-wrap:anywhere; }
   .hidden { display:none; }
   table { width:100%; border-collapse:collapse; font-size:13px; }
   th, td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--border); }
