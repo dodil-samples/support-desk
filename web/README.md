@@ -35,6 +35,24 @@ Point it at your app and keys via **⚙ Settings**, or with query params:
 index.html?app=https://support-desk-<org>.ignite.dodil.cloud/&pk=pk_xxx&ak=ak_xxx
 ```
 
+## Host it on Ignite too (BYOI)
+
+The same folder ships a `Dockerfile` so the dashboard can run **on Ignite** as a
+bring-your-own-image app with its own public URL — the `collector.mjs` static
+server on `$PORT`, answering `GET /healthz` for the readiness probe:
+
+```bash
+dodil ignite app deploy support-desk-ui --code ./web --dockerfile-path Dockerfile \
+  --allow-unauthenticated --tier small \
+  --env APP_URL=https://support-desk-<org>.ignite.dodil.cloud/
+```
+
+Live example: **https://support-desk-ui-cardinalai.ignite.dodil.cloud/**
+
+Note the `Dockerfile` uses a **numeric** `USER 1000` (not `USER node`): Ignite runs
+pods `runAsNonRoot`, and Kubernetes rejects a *named* user with
+`CreateContainerConfigError` ("cannot verify user is non-root").
+
 ## CRM inbound-email webhook (`collector.mjs`)
 
 A CRM / email provider posting an inbound message (no browser) opens a ticket via

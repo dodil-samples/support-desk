@@ -65,6 +65,10 @@ async function serveStatic(res, urlPath) {
 
 createServer(async (req, res) => {
   const u = new URL(req.url, `http://localhost:${PORT}`);
+  if (u.pathname === "/healthz") { // Ignite BYOI readiness/liveness probe
+    res.writeHead(200, { "content-type": "text/plain" });
+    return res.end("ok");
+  }
   if (u.pathname === "/inbound" && req.method === "POST") {
     const result = await submit(await readBody(req));
     res.writeHead(result.ok ? 200 : 502, { "content-type": "application/json" });
