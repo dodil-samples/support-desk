@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Agent Inbox — Support Desk</title>
+<style>
+  :root {
+    --surface:#fcfcfb; --plane:#f9f9f7; --ink:#0b0b0b; --ink2:#52514e; --muted:#898781;
+    --grid:#e1e0d9; --accent:#2a78d6; --accent-soft:#cde2fb;
+    --good:#0ca30c; --warn:#fab219; --serious:#ec835a; --crit:#d03b3b;
+    --border:rgba(11,11,11,0.10);
+    --font: system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --surface:#1a1a19; --plane:#0d0d0d; --ink:#fff; --ink2:#c3c2b7; --muted:#898781;
+      --grid:#2c2c2a; --accent:#3987e5; --accent-soft:#184f95;
+      --border:rgba(255,255,255,0.10);
+    }
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--plane); color:var(--ink); font-family:var(--font); font-size:14px; line-height:1.5; }
+  .wrap { max-width:1100px; margin:0 auto; padding:20px 16px 64px; }
+  header.top { display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+               padding-bottom:12px; border-bottom:1px solid var(--border); margin-bottom:20px; }
+  header.top h1 { font-size:18px; margin:0; font-weight:700; }
+  .badge { font-size:11px; padding:2px 8px; border-radius:999px; border:1px solid var(--border);
+           color:var(--serious); background:var(--surface); }
+  .spacer { flex:1; }
+  button, input, select, textarea { font-family:var(--font); font-size:13px; }
+  button { cursor:pointer; border:1px solid var(--border); background:var(--surface); color:var(--ink);
+           padding:7px 12px; border-radius:8px; }
+  button.primary { background:var(--accent); color:#fff; border-color:transparent; }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  input, select, textarea { background:var(--surface); color:var(--ink); border:1px solid var(--border);
+                            border-radius:8px; padding:7px 10px; }
+  textarea { min-height:72px; resize:vertical; width:100%; }
+  .card { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:16px; margin-bottom:16px; }
+  .card h2 { font-size:13px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); margin:0 0 12px; font-weight:600; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .muted { color:var(--muted); } .err { color:var(--crit); } .ok { color:var(--good); }
+  .hidden { display:none; }
+  .tiles { display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:12px; }
+  .tile { background:var(--plane); border:1px solid var(--border); border-radius:10px; padding:12px 14px; }
+  .tile .v { font-size:24px; font-weight:700; } .tile .l { font-size:12px; color:var(--muted); }
+  .bars { display:flex; flex-direction:column; gap:7px; }
+  .bar-row { display:grid; grid-template-columns:110px 1fr auto; gap:10px; align-items:center; }
+  .bar-row .name { color:var(--ink2); display:flex; align-items:center; gap:6px; }
+  .dot { width:9px; height:9px; border-radius:50%; flex:0 0 auto; display:inline-block; }
+  .bar-track { background:var(--plane); border-radius:5px; height:18px; overflow:hidden; }
+  .bar-fill { height:100%; background:var(--accent); border-radius:5px; min-width:2px; }
+  .bar-row .val { font-variant-numeric:tabular-nums; color:var(--ink2); font-size:12px; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th, td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--border); }
+  th { color:var(--muted); font-weight:600; font-size:11px; text-transform:uppercase; letter-spacing:.03em; }
+  tr.t { cursor:pointer; } tr.t:hover td { background:color-mix(in srgb, var(--accent) 6%, transparent); }
+  .pill { font-size:11px; padding:1px 8px; border-radius:999px; border:1px solid var(--border); font-weight:600; }
+  pre.out { background:var(--plane); border:1px solid var(--border); border-radius:8px; padding:10px;
+            overflow:auto; font-size:12px; max-height:240px; margin:8px 0 0;
+            white-space:pre-wrap; word-break:break-word; }
+  .split { display:grid; grid-template-columns: 1fr 1fr; gap:16px; }
+  .split > * { min-width:0; }
+  @media (max-width:860px) { .split { grid-template-columns:1fr; } }
+  .msg { border:1px solid var(--border); border-radius:8px; padding:8px 10px; background:var(--plane);
+         font-size:13px; margin-bottom:6px; }
+  .msg .who { font-size:11px; color:var(--muted); margin-bottom:2px; text-transform:capitalize; }
+  .msg.agent { border-color:color-mix(in srgb, var(--accent) 40%, transparent); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <h1>Agent Inbox</h1>
+    <span class="badge">admin portal</span>
+    <span class="spacer"></span>
+    <select id="statusFilter"></select>
+    <button id="refresh">↻ Refresh</button>
+  </header>
+
+  <pre class="out err hidden" id="topErr"></pre>
+
+  <section class="card" id="statsCard">
+    <h2>Today</h2>
+    <div class="tiles" id="statTiles"></div>
+    <div style="margin-top:16px"><div class="muted" style="font-size:12px;margin-bottom:6px">Open by priority</div>
+      <div class="bars" id="priorityBars"></div></div>
+  </section>
+
+  <div class="split">
+    <section class="card">
+      <h2>Queue</h2>
+      <div style="overflow:auto"><table id="queue"></table></div>
+    </section>
+
+    <section class="card hidden" id="detail">
+      <h2>Ticket <span class="muted" id="dId" style="text-transform:none"></span></h2>
+      <div class="row" style="margin-bottom:8px">
+        <strong id="dSubject" style="flex:1 1 100%"></strong>
+        <span id="dPills"></span>
+      </div>
+      <div id="dMsgs" style="max-height:280px;overflow:auto"></div>
+      <div style="margin-top:10px">
+        <textarea id="dReply" placeholder="Reply to the customer…"></textarea>
+        <div class="row" style="margin-top:6px">
+          <button id="dDraft">✨ Draft with AI</button>
+          <button class="primary" id="dSend">Send reply</button>
+          <span class="muted" id="dHint"></span>
+        </div>
+      </div>
+      <div class="row" style="margin-top:12px">
+        <select id="dStatus"></select>
+        <input id="dAssignee" placeholder="assignee" style="width:140px" />
+        <button id="dUpdate">Update</button>
+      </div>
+    </section>
+  </div>
+
+  <section class="card">
+    <h2>API keys</h2>
+    <div class="row" style="margin-bottom:8px">
+      <select id="kKind"><option value="public">public (project)</option><option value="admin">admin</option></select>
+      <input id="kLabel" placeholder="label" style="width:180px" />
+      <button id="kCreate">Create key</button>
+      <span class="muted" id="kHint"></span>
+    </div>
+    <div style="overflow:auto"><table id="keys"></table></div>
+  </section>
+
+  <p class="muted" style="font-size:12px">
+    All calls go to this portal's own server (<code>POST /api</code>), which holds the
+    admin key and proxies the private backend — the key never reaches the browser.
+  </p>
+</div>
+<script src="./app.js"></script>
+</body>
+</html>

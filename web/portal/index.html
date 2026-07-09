@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Help Center — Support Desk</title>
+<style>
+  :root {
+    --surface:#fcfcfb; --plane:#f9f9f7; --ink:#0b0b0b; --ink2:#52514e; --muted:#898781;
+    --grid:#e1e0d9; --accent:#2a78d6; --accent-soft:#cde2fb;
+    --good:#0ca30c; --warn:#fab219; --serious:#ec835a; --crit:#d03b3b;
+    --border:rgba(11,11,11,0.10);
+    --font: system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --surface:#1a1a19; --plane:#0d0d0d; --ink:#fff; --ink2:#c3c2b7; --muted:#898781;
+      --grid:#2c2c2a; --accent:#3987e5; --accent-soft:#184f95;
+      --border:rgba(255,255,255,0.10);
+    }
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--plane); color:var(--ink); font-family:var(--font); font-size:14px; line-height:1.5; }
+  code { font-size:12px; }
+  .wrap { max-width:760px; margin:0 auto; padding:20px 16px 64px; }
+  header.top { display:flex; align-items:center; gap:10px; padding-bottom:12px;
+               border-bottom:1px solid var(--border); margin-bottom:24px; }
+  header.top h1 { font-size:18px; margin:0; font-weight:700; }
+  .badge { font-size:11px; padding:2px 8px; border-radius:999px; border:1px solid var(--border);
+           color:var(--good); background:var(--surface); }
+  button, input, textarea { font-family:var(--font); font-size:13px; }
+  button { cursor:pointer; border:1px solid var(--border); background:var(--surface); color:var(--ink);
+           padding:8px 14px; border-radius:8px; }
+  button.primary { background:var(--accent); color:#fff; border-color:transparent; }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  input, textarea { background:var(--surface); color:var(--ink); border:1px solid var(--border);
+                    border-radius:8px; padding:8px 10px; width:100%; }
+  textarea { min-height:88px; resize:vertical; }
+  .card { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:18px; margin-bottom:18px; }
+  .card h2 { font-size:13px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); margin:0 0 12px; font-weight:600; }
+  .fld { display:flex; flex-direction:column; gap:3px; font-size:12px; color:var(--muted); margin-bottom:10px; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .grow { flex:1 1 160px; min-width:120px; }
+  .muted { color:var(--muted); } .err { color:var(--crit); } .ok { color:var(--good); }
+  .hidden { display:none; }
+  .kb-hit { border:1px solid var(--border); border-radius:8px; padding:10px 12px; margin-bottom:6px; background:var(--plane); }
+  .pill { font-size:11px; padding:2px 9px; border-radius:999px; border:1px solid var(--border); font-weight:600; }
+  .confirm { border:1px solid color-mix(in srgb, var(--good) 40%, transparent); border-radius:10px;
+             background:color-mix(in srgb, var(--good) 6%, var(--surface)); padding:14px; margin-top:10px; }
+  .confirm .tid { font-family:ui-monospace, monospace; font-size:15px; font-weight:700; }
+  .timeline { margin-top:10px; display:flex; flex-direction:column; gap:6px; }
+  .msg { border:1px solid var(--border); border-radius:8px; padding:8px 10px; background:var(--plane); font-size:13px; }
+  .msg .who { font-size:11px; color:var(--muted); margin-bottom:2px; text-transform:capitalize; }
+  pre.out { background:var(--plane); border:1px solid var(--border); border-radius:8px; padding:10px;
+            overflow:auto; font-size:12px; max-height:200px; margin:8px 0 0;
+            white-space:pre-wrap; word-break:break-word; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <h1>Help Center</h1>
+    <span class="badge">customer portal</span>
+  </header>
+
+  <!-- KB search / deflection -->
+  <section class="card">
+    <h2>How can we help?</h2>
+    <div class="fld">Search the knowledge base
+      <div class="row"><input id="kbQ" class="grow" placeholder="e.g. duplicate charge refund" />
+        <button id="kbBtn">Search</button></div>
+    </div>
+    <div id="kbOut"></div>
+  </section>
+
+  <!-- Submit -->
+  <section class="card">
+    <h2>Still stuck? Open a ticket</h2>
+    <div class="fld">Subject <input id="tSubject" placeholder="Short summary" /></div>
+    <div class="fld">What happened? <textarea id="tBody" placeholder="Describe the issue"></textarea></div>
+    <div class="fld">Your email <input id="tEmail" type="email" placeholder="you@example.com" /></div>
+    <div class="row"><button class="primary" id="tSend">Submit ticket</button>
+      <span class="muted" id="tHint"></span></div>
+    <div id="tConfirm" class="confirm hidden"></div>
+    <div id="deflect" class="hidden" style="margin-top:12px">
+      <div class="muted" style="font-size:12px;margin-bottom:6px">While you wait — these articles may help:</div>
+      <div id="deflectOut"></div>
+    </div>
+  </section>
+
+  <!-- Status -->
+  <section class="card">
+    <h2>Check a ticket</h2>
+    <div class="row">
+      <input id="sId" class="grow" placeholder="ticket_id (t_…)" />
+      <input id="sEmail" class="grow" type="email" placeholder="email you used" />
+      <button id="sBtn">Check status</button>
+    </div>
+    <div id="sOut" style="margin-top:10px"></div>
+  </section>
+
+  <p class="muted" style="font-size:12px">
+    This portal only talks to its own server (<code>POST /api</code>), which proxies the
+    public support backend. Ticket triage happens in the background — your ticket is
+    filed instantly.
+  </p>
+</div>
+<script src="./app.js"></script>
+</body>
+</html>

@@ -36,9 +36,20 @@ import uuid
 # Actions any anonymous caller may run. Everything else is PRIVATE.
 PUBLIC_ACTIONS = {"submit_ticket", "ticket_status", "search_kb"}
 
+# Which tier this deployment serves. The realistic layout is TWO apps over one
+# codebase: APP_ROLE=public (customer backend — PUBLIC_ACTIONS only, anon FQDN)
+# and APP_ROLE=admin (agent backend — every action, fail-closed on ADMIN_KEYS).
+# The default "all" keeps a plain single-app dev deploy working.
+APP_ROLE = os.getenv("APP_ROLE", "all")
+
 
 def is_public_action(action: str) -> bool:
     return action in PUBLIC_ACTIONS
+
+
+def exposes(action: str) -> bool:
+    """Whether this deployment serves the action at all (before any key check)."""
+    return APP_ROLE != "public" or is_public_action(action)
 
 
 def _env_keys(name: str) -> set[str]:
@@ -104,7 +115,14 @@ def authorize(k3, action: str, payload: dict) -> dict:
             return {"ok": True, "role": role}
         return {"ok": False, "role": role, "error": "a valid project key is required (payload.key)"}
     # PRIVATE
-    if (not admin_configured) or is_admin:
+    if is_admin:
+        return {"ok": True, "role": role}
+    if not admin_configured:
+        # A dedicated admin backend must never run open — the graceful default
+        # only applies to the combined single-app deploy.
+        if APP_ROLE == "admin":
+            return {"ok": False, "role": role,
+                    "error": "admin backend is fail-closed: configure ADMIN_KEYS to unlock"}
         return {"ok": True, "role": role}
     return {"ok": False, "role": role, "error": "admin key required for this action (payload.key)"}
 

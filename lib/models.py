@@ -6,7 +6,8 @@ is the same service-account bearer used for K3.
 
 Env:
   MODEL_API_BASE   default https://api.dev.dodil.io/v1
-  MODEL_NAME       default kimi-k2.6
+  MODEL_NAME       default moonshot-v1-auto (fast instruct — triage in ~2s; set a
+                   reasoning model like kimi-k2.6 only if you can afford ~30s/call)
   EMBED_MODEL      default jina-embeddings-v4
 """
 
@@ -18,7 +19,7 @@ import os
 from . import auth, http
 
 BASE = os.getenv("MODEL_API_BASE", "https://api.dev.dodil.io/v1").rstrip("/")
-CHAT_MODEL = os.getenv("MODEL_NAME", "kimi-k2.6")
+CHAT_MODEL = os.getenv("MODEL_NAME", "moonshot-v1-auto")
 EMBED_MODEL = os.getenv("EMBED_MODEL", "jina-embeddings-v4")
 
 

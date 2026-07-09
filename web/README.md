@@ -1,71 +1,17 @@
-# Support Desk — dashboard (public anonymous invocation)
+# Support Desk — two portals
 
-A **pure static** dashboard: no build, no server required. Every call is an
-anonymous `POST` straight to the app's public FQDN (anonymous access enabled,
-permissive CORS):
+The UI is split the way a real ticketing product is:
 
-```
-POST https://support-desk-<org>.ignite.dodil.cloud/
-content-type: application/json
-{ "action": "search_kb", "query": "refund", "top_k": 5 }
-```
+| | portal | backend it talks to | who |
+|---|---|---|---|
+| [`portal/`](portal/) | **Help center** — KB search + deflection, instant ticket submission, check-my-ticket, CRM inbound-email webhook | public backend (`APP_ROLE=public`) | customers, anonymous |
+| [`admin/`](admin/) | **Agent inbox** — stats, queue, ticket detail with AI reply drafts, status/assign, key management | admin backend (`APP_ROLE=admin`) | agents, admin key |
 
-## What it shows
+Both are zero-build static pages, each served by its own zero-dependency node
+server that proxies `POST /api` to its backend with the right key injected
+**server-side** — configuration is entirely env (`.env.example` in each folder),
+there are no URL or key fields in the UI, and no key ever reaches the browser.
 
-- **Help center** (public) — `search_kb`, `submit_ticket`, `ticket_status`. Anyone can
-  search the KB, open a ticket, and check *their own* ticket (id + the email used).
-  Carries the project (public) key if one is configured.
-- **Agent inbox** (private) — `stats` + `list_tickets`: open-by-priority, CSAT,
-  first-response p90, SLA breaches, and the ticket queue. Requires an **admin key**;
-  without it the app returns `401` and the inbox stays locked.
-
-## Run it
-
-Open `index.html`, or serve the folder (also enables the inbound-email webhook):
-
-```bash
-node collector.mjs            # dashboard on http://localhost:8788/
-# or, dashboard only:
-python3 -m http.server 8788   # then open http://localhost:8788/
-```
-
-Point it at your app and keys via **⚙ Settings**, or with query params:
-
-```
-index.html?app=https://support-desk-<org>.ignite.dodil.cloud/&pk=pk_xxx&ak=ak_xxx
-```
-
-## Host it on Ignite too (BYOI)
-
-The same folder ships a `Dockerfile` so the dashboard can run **on Ignite** as a
-bring-your-own-image app with its own public URL — the `collector.mjs` static
-server on `$PORT`, answering `GET /healthz` for the readiness probe:
-
-```bash
-dodil ignite app deploy support-desk-ui --code ./web --dockerfile-path Dockerfile \
-  --allow-unauthenticated --tier small \
-  --env APP_URL=https://support-desk-<org>.ignite.dodil.cloud/
-```
-
-Live example: **https://support-desk-ui-cardinalai.ignite.dodil.cloud/**
-
-Note the `Dockerfile` uses a **numeric** `USER 1000` (not `USER node`): Ignite runs
-pods `runAsNonRoot`, and Kubernetes rejects a *named* user with
-`CreateContainerConfigError` ("cannot verify user is non-root").
-
-## CRM inbound-email webhook (`collector.mjs`)
-
-A CRM / email provider posting an inbound message (no browser) opens a ticket via
-the public `submit_ticket`. `collector.mjs` normalises common webhook shapes:
-
-```bash
-APP_URL=https://support-desk-<org>.ignite.dodil.cloud/ \
-PUBLIC_KEY=pk_xxx node collector.mjs
-
-curl -X POST http://localhost:8788/inbound \
-  -H 'content-type: application/json' \
-  -d '{"from":"sam@acme.io","subject":"Refund not received","text":"Charged twice for #8891."}'
-```
-
-That's the "public backend → CRM email tracking" path: inbound email → public
-ticket, no credentials on the caller's side.
+Run locally: `cd portal && node server.mjs` / `cd admin && node server.mjs`
+(after copying + editing each `.env.example`). Deploy on Ignite: each folder's
+`Dockerfile` header has the one-liner.

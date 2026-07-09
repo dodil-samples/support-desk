@@ -21,6 +21,7 @@ import os
 import re
 import statistics
 import sys
+import threading
 import uuid
 
 # Make the app's own modules importable regardless of the launcher's cwd.
@@ -49,6 +50,11 @@ def _sql_str(v) -> str:
     """Single-quote-escape a value for inline SQL (ids/enums only, not free text)."""
     return "'" + str(v).replace("'", "''") + "'"
 
+
+# Ticket lifecycle enum — the single source of truth. The portals' status
+# dropdowns/pills and info.yaml mirror this list; set_status and the
+# list_tickets filter reject anything outside it.
+STATUSES = ("new", "open", "pending", "solved")
 
 # First-response SLA targets (hours) per priority — Zendesk-style.
 SLA_FIRST_RESPONSE_HOURS = {"urgent": 1, "high": 4, "normal": 8, "low": 24}
@@ -104,6 +110,36 @@ def _triage(subject: str, body: str) -> dict:
     }
 
 
+# Placeholder classification a ticket carries until (background) triage lands —
+# identical to _triage's fallbacks, so consumers never see a special state.
+TRIAGE_DEFAULTS = {"category": "other", "priority": "normal", "sentiment": "neutral", "tags": []}
+
+
+def _apply_triage(k3, ticket_id: str, tri: dict) -> None:
+    k3.execute(
+        f"UPDATE tickets SET category={_sql_str(tri['category'])}, "
+        f"priority={_sql_str(tri['priority'])}, sentiment={_sql_str(tri['sentiment'])}, "
+        f"tags_json={_sql_str(json.dumps(tri['tags']))}, updated_at={_sql_str(_now())} "
+        f"WHERE ticket_id={_sql_str(ticket_id)}"
+    )
+
+
+def _triage_async(k3, ticket_id: str, subject: str, body: str) -> None:
+    """Classify in the background so the public submit path returns immediately.
+
+    Runs on a daemon thread in the warm replica: the row already exists with
+    TRIAGE_DEFAULTS and is UPDATEd when the model answers. Best-effort — if the
+    replica is recycled mid-flight the ticket just keeps its defaults, and the
+    admin `triage` action re-runs the classification on demand.
+    """
+    def work():
+        try:
+            _apply_triage(k3, ticket_id, _triage(subject, body))
+        except Exception:
+            pass
+    threading.Thread(target=work, daemon=True).start()
+
+
 def _store_message(k3, ticket_id: str, author: str, role: str, body: str) -> dict:
     mid = "m_" + uuid.uuid4().hex[:12]
     key = f"tickets/{ticket_id}/messages/{mid}.txt"
@@ -117,19 +153,25 @@ def _store_message(k3, ticket_id: str, author: str, role: str, body: str) -> dic
 
 
 # ------------------------------------------------------------------------- actions
-def create_ticket(k3, p: dict) -> dict:
-    subject = p.get("subject", "(no subject)")
-    body = p.get("body", "")
-    tid = "t_" + uuid.uuid4().hex[:12]
-    tri = _triage(subject, body)
-    row = {
-        "ticket_id": tid, "subject": subject, "requester_email": p.get("requester_email", ""),
+def _new_ticket_row(tid: str, p: dict, tri: dict) -> dict:
+    return {
+        "ticket_id": tid, "subject": p.get("subject", "(no subject)"),
+        "requester_email": p.get("requester_email", ""),
         "channel": p.get("channel", "web"), "status": "new",
         "priority": tri["priority"], "category": tri["category"], "sentiment": tri["sentiment"],
         "assignee": "", "csat": None, "created_at": _now(), "updated_at": _now(),
         "first_response_at": "", "solved_at": "", "tags_json": json.dumps(tri["tags"]),
     }
-    k3.upsert("tickets", [row])
+
+
+def create_ticket(k3, p: dict) -> dict:
+    """PRIVATE: an agent files a ticket and wants the full picture back in one
+    round-trip — so triage runs inline here (slower, but the caller is staff)."""
+    subject = p.get("subject", "(no subject)")
+    body = p.get("body", "")
+    tid = "t_" + uuid.uuid4().hex[:12]
+    tri = _triage(subject, body)
+    k3.upsert("tickets", [_new_ticket_row(tid, p, tri)])
     msg = _store_message(k3, tid, p.get("requester_email", "customer"), "customer", body)
     suggestions = _kb_hits(k3, f"{subject}\n{body}")
     return {"ticket_id": tid, "triage": tri, "first_message_id": msg["message_id"],
@@ -139,17 +181,23 @@ def create_ticket(k3, p: dict) -> dict:
 def submit_ticket(k3, p: dict) -> dict:
     """PUBLIC: a customer opens a ticket from a website form / CRM inbound email.
 
-    Same pipeline as create_ticket (triage + store + KB suggestions) but returns
-    only the customer-safe fields — no cross-ticket duplicate hints, no internal
-    triage tags — plus a status token (ticket_id + email) to check it later.
+    Instant by design: a pure warehouse write (ticket row + first message) that
+    returns as soon as it's durable. LLM triage runs in the background and
+    updates the row when it lands (TRIAGE_DEFAULTS until then), and KB
+    suggestions are NOT bundled here — the portal fires `search_kb` as its own
+    call. Response is customer-safe only: a status token (ticket_id + email).
     """
-    res = create_ticket(k3, p)
+    subject = p.get("subject", "(no subject)")
+    body = p.get("body", "")
+    tid = "t_" + uuid.uuid4().hex[:12]
+    k3.upsert("tickets", [_new_ticket_row(tid, p, TRIAGE_DEFAULTS)])
+    _store_message(k3, tid, p.get("requester_email", "customer"), "customer", body)
+    _triage_async(k3, tid, subject, body)
     return {
-        "ticket_id": res["ticket_id"],
+        "ticket_id": tid,
         "status": "new",
         "message": "Thanks — your request was received. Use ticket_status with your "
                    "ticket_id and email to check progress.",
-        "suggested_help": res.get("suggested_kb", []),
     }
 
 
@@ -194,12 +242,7 @@ def triage(k3, p: dict) -> dict:
     t = _one(k3, f"SELECT subject, requester_email FROM tickets WHERE ticket_id={_sql_str(tid)}")
     body = _latest_customer_body(k3, tid)
     tri = _triage(t.get("subject", ""), body)
-    k3.execute(
-        f"UPDATE tickets SET category={_sql_str(tri['category'])}, "
-        f"priority={_sql_str(tri['priority'])}, sentiment={_sql_str(tri['sentiment'])}, "
-        f"tags_json={_sql_str(json.dumps(tri['tags']))}, updated_at={_sql_str(_now())} "
-        f"WHERE ticket_id={_sql_str(tid)}"
-    )
+    _apply_triage(k3, tid, tri)
     return {"ticket_id": tid, "triage": tri}
 
 
@@ -245,6 +288,8 @@ def get_ticket(k3, p: dict) -> dict:
 
 
 def list_tickets(k3, p: dict) -> dict:
+    if p.get("status") and p["status"] not in STATUSES:
+        return {"error": f"invalid status {p['status']!r} — expected one of {list(STATUSES)}"}
     where = []
     for f in ("status", "category", "assignee", "priority"):
         if p.get(f):
@@ -261,6 +306,8 @@ def list_tickets(k3, p: dict) -> dict:
 
 def set_status(k3, p: dict) -> dict:
     tid, status = p["ticket_id"], p["status"]
+    if status not in STATUSES:
+        return {"error": f"invalid status {status!r} — expected one of {list(STATUSES)}"}
     extra = f", solved_at={_sql_str(_now())}" if status == "solved" else ""
     k3.execute(f"UPDATE tickets SET status={_sql_str(status)}, updated_at={_sql_str(_now())}"
                f"{extra} WHERE ticket_id={_sql_str(tid)}")
@@ -426,6 +473,10 @@ def handler(event, context):
     fn = ACTIONS.get(action)
     if not fn:
         return {"error": f"unknown action {action!r}", "actions": sorted(ACTIONS)}
+    if not gate.exposes(action):
+        return {"ok": False, "action": action, "code": 404,
+                "error": f"action {action!r} is not served by this deployment "
+                         f"(APP_ROLE={gate.APP_ROLE})"}
 
     try:
         k3 = bootstrap.ensure()

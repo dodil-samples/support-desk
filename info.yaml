@@ -32,7 +32,11 @@ input:
     channel: { type: string }
     ticket_id: { type: string }
     query: { type: string }
-    status: { type: string }
+    status:
+      type: string
+      # Ticket lifecycle enum — mirrors STATUSES in handler.py; set_status and
+      # the list_tickets filter reject anything else.
+      enum: [new, open, pending, solved]
     assignee: { type: string }
 
 output:
@@ -45,8 +49,14 @@ output:
 env:
   - DODIL_SA_ID
   - DODIL_SA_SECRET
+  # Which tier this deployment serves (lib/gate.py). The realistic layout is two
+  # apps over this one codebase: public (customer backend — PUBLIC actions only)
+  # and admin (agent backend — everything, fail-closed unless ADMIN_KEYS is set).
+  # Default "all" = combined single-app dev deploy.
+  - APP_ROLE        # public | admin | all
   # Public/private gate (see lib/gate.py). Comma-separated. If a tier has no key
-  # configured (env + api_keys table both empty), that tier is open.
+  # configured (env + api_keys table both empty), that tier is open — EXCEPT the
+  # private tier under APP_ROLE=admin, which refuses to run without ADMIN_KEYS.
   - ADMIN_KEYS      # authorizes PRIVATE actions (agent inbox, admin, key mgmt)
   - PUBLIC_KEYS     # authorizes PUBLIC actions (submit_ticket, ticket_status, search_kb)
 
