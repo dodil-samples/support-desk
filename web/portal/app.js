@@ -9,6 +9,20 @@
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
 
+// ---------------------------------------------------------------- router
+// Left-nav shell: hash-routed views (#help/#submit/#status/#mine), no framework.
+const NAV = document.querySelectorAll("#nav a[data-view]");
+function show(view) {
+  if (!document.getElementById("view-" + view)) view = "help";
+  document.querySelectorAll(".view").forEach((s) =>
+    s.classList.toggle("active", s.id === "view-" + view));
+  NAV.forEach((a) => a.classList.toggle("active", a.dataset.view === view));
+  if (location.hash !== "#" + view) history.replaceState(null, "", "#" + view);
+}
+NAV.forEach((a) => a.addEventListener("click", (e) => { e.preventDefault(); show(a.dataset.view); }));
+window.addEventListener("hashchange", () => show(location.hash.slice(1)));
+show(location.hash.slice(1) || "help");
+
 // Mirrors STATUSES in handler.py — the backend rejects anything else.
 const STATUS = {
   new:     { label: "New",         color: "var(--accent)" },
@@ -36,9 +50,11 @@ let me = null; // {email, name, role} when signed in
 
 function renderAccount() {
   $("acctBadge").innerHTML = me
-    ? `${esc(me.email)} · <a href="#" id="aOut" style="color:inherit">sign out</a>` : "";
+    ? `${esc(me.email)}<br/><a href="#" id="aOut" style="color:inherit">sign out</a>` : "";
   $("mineCard").classList.toggle("hidden", !me);
   $("acctCard").classList.toggle("hidden", !!me || !authMode || authMode === "none");
+  $("mineAnonNote").classList.toggle("hidden", authMode !== "none");
+  $("navMine").classList.toggle("hidden", authMode === "none");
   if (me) {
     $("tEmail").value = me.email;
     $("tEmail").disabled = true;
@@ -65,7 +81,7 @@ async function loadMine() {
   for (const el of $("mineOut").querySelectorAll("[data-tid]")) {
     el.addEventListener("click", () => {
       $("sId").value = el.dataset.tid; $("sEmail").value = me.email;
-      $("sBtn").click(); $("sId").scrollIntoView({ behavior: "smooth" });
+      show("status"); $("sBtn").click();
     });
   }
 }
@@ -163,8 +179,8 @@ $("tSend").addEventListener("click", async () => {
   box.innerHTML = `✅ Ticket filed in ${Math.round(performance.now() - t0)} ms — keep this id:
     <div class="tid">${esc(r.result.ticket_id)}</div>
     <div class="muted" style="font-size:12px">${r.result.verified
-      ? "Filed on your verified account — it's in “My tickets” above."
-      : "Check progress below with this id and your email."}</div>`;
+      ? "Filed on your verified account — see “My tickets”."
+      : "Check progress in “Check a ticket” with this id and your email."}</div>`;
   $("sId").value = r.result.ticket_id; $("sEmail").value = email;
   if (me) loadMine();
 

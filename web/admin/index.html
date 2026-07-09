@@ -20,14 +20,33 @@
     }
   }
   * { box-sizing:border-box; }
-  body { margin:0; background:var(--plane); color:var(--ink); font-family:var(--font); font-size:14px; line-height:1.5; }
-  .wrap { max-width:1100px; margin:0 auto; padding:20px 16px 64px; }
-  header.top { display:flex; align-items:center; gap:10px; flex-wrap:wrap;
-               padding-bottom:12px; border-bottom:1px solid var(--border); margin-bottom:20px; }
-  header.top h1 { font-size:18px; margin:0; font-weight:700; }
-  .badge { font-size:11px; padding:2px 8px; border-radius:999px; border:1px solid var(--border);
-           color:var(--serious); background:var(--surface); }
-  .spacer { flex:1; }
+  body { margin:0; background:var(--plane); color:var(--ink); font-family:var(--font);
+         font-size:14px; line-height:1.5; display:grid; grid-template-columns:216px 1fr;
+         min-height:100vh; }
+
+  /* ---- left navigation ---- */
+  aside.side { background:var(--surface); border-right:1px solid var(--border);
+               padding:16px 10px; display:flex; flex-direction:column; gap:4px;
+               position:sticky; top:0; height:100vh; }
+  .brand { font-weight:700; font-size:15px; padding:4px 10px 14px; display:flex;
+           align-items:center; gap:8px; }
+  .badge { font-size:10px; padding:2px 8px; border-radius:999px; border:1px solid var(--border);
+           color:var(--serious); background:var(--plane); font-weight:600; }
+  nav a { display:flex; align-items:center; gap:9px; padding:8px 10px; border-radius:8px;
+          color:var(--ink2); text-decoration:none; font-weight:500; cursor:pointer; }
+  nav a:hover { background:color-mix(in srgb, var(--accent) 7%, transparent); }
+  nav a.active { background:color-mix(in srgb, var(--accent) 13%, transparent);
+                 color:var(--ink); font-weight:600; }
+  nav a .ico { width:18px; text-align:center; }
+  .side-foot { margin-top:auto; padding:10px; }
+  .side-foot button { width:100%; }
+
+  /* ---- content ---- */
+  main { padding:22px 26px 64px; min-width:0; max-width:1160px; }
+  .view { display:none; }
+  .view.active { display:block; }
+  h1.vt { font-size:17px; margin:0 0 16px; font-weight:700; }
+
   button, input, select, textarea { font-family:var(--font); font-size:13px; }
   button { cursor:pointer; border:1px solid var(--border); background:var(--surface); color:var(--ink);
            padding:7px 12px; border-radius:8px; }
@@ -61,69 +80,94 @@
             white-space:pre-wrap; word-break:break-word; }
   .split { display:grid; grid-template-columns: 1fr 1fr; gap:16px; }
   .split > * { min-width:0; }
-  @media (max-width:860px) { .split { grid-template-columns:1fr; } }
   .msg { border:1px solid var(--border); border-radius:8px; padding:8px 10px; background:var(--plane);
          font-size:13px; margin-bottom:6px; }
   .msg .who { font-size:11px; color:var(--muted); margin-bottom:2px; text-transform:capitalize; }
   .msg.agent { border-color:color-mix(in srgb, var(--accent) 40%, transparent); }
+
+  @media (max-width:860px) {
+    body { grid-template-columns:1fr; }
+    aside.side { position:static; height:auto; flex-direction:row; align-items:center;
+                 overflow-x:auto; border-right:none; border-bottom:1px solid var(--border); }
+    .brand { padding:4px 10px; } nav { display:flex; gap:2px; } .side-foot { margin:0; padding:0 6px; }
+    .split { grid-template-columns:1fr; }
+    main { padding:16px 14px 48px; }
+  }
 </style>
 </head>
 <body>
-<div class="wrap">
-  <header class="top">
-    <h1>Agent Inbox</h1>
-    <span class="badge">admin portal</span>
-    <span class="spacer"></span>
-    <select id="statusFilter"></select>
-    <select id="assigneeFilter"><option value="">all agents</option></select>
-    <button id="refresh">↻ Refresh</button>
-  </header>
+<aside class="side">
+  <div class="brand">Support Desk <span class="badge">inbox</span></div>
+  <nav id="nav">
+    <a data-view="dashboard"><span class="ico">📊</span> Dashboard</a>
+    <a data-view="tickets"><span class="ico">🎫</span> Tickets</a>
+    <a data-view="agents"><span class="ico">👥</span> Agents</a>
+    <a data-view="routing"><span class="ico">🧭</span> Routing rules</a>
+    <a data-view="kb"><span class="ico">📚</span> Knowledge base</a>
+    <a data-view="keys"><span class="ico">🔑</span> API keys</a>
+  </nav>
+  <div class="side-foot"><button id="refresh">↻ Refresh</button></div>
+</aside>
 
+<main>
   <pre class="out err hidden" id="topErr"></pre>
 
-  <section class="card" id="statsCard">
-    <h2>Today</h2>
-    <div class="tiles" id="statTiles"></div>
-    <div style="margin-top:16px"><div class="muted" style="font-size:12px;margin-bottom:6px">Open by priority</div>
-      <div class="bars" id="priorityBars"></div></div>
+  <!-- ============================== Dashboard -->
+  <section class="view" id="view-dashboard">
+    <h1 class="vt">Dashboard</h1>
+    <section class="card" id="statsCard">
+      <h2>Today</h2>
+      <div class="tiles" id="statTiles"></div>
+      <div style="margin-top:16px"><div class="muted" style="font-size:12px;margin-bottom:6px">Open by priority</div>
+        <div class="bars" id="priorityBars"></div></div>
+    </section>
   </section>
 
-  <div class="split">
-    <section class="card">
-      <h2>Queue</h2>
-      <div style="overflow:auto"><table id="queue"></table></div>
-    </section>
+  <!-- ============================== Tickets -->
+  <section class="view" id="view-tickets">
+    <h1 class="vt">Tickets</h1>
+    <div class="row" style="margin-bottom:12px">
+      <select id="statusFilter"></select>
+      <select id="assigneeFilter"><option value="">all agents</option></select>
+    </div>
+    <div class="split">
+      <section class="card">
+        <h2>Queue</h2>
+        <div style="overflow:auto"><table id="queue"></table></div>
+      </section>
 
-    <section class="card hidden" id="detail">
-      <h2>Ticket <span class="muted" id="dId" style="text-transform:none"></span></h2>
-      <div class="row" style="margin-bottom:8px">
-        <strong id="dSubject" style="flex:1 1 100%"></strong>
-        <span id="dPills"></span>
-      </div>
-      <div id="dMsgs" style="max-height:280px;overflow:auto"></div>
-      <div style="margin-top:10px">
-        <textarea id="dReply" placeholder="Reply to the customer…"></textarea>
-        <div class="row" style="margin-top:6px">
-          <button id="dDraft">✨ Draft with AI</button>
-          <button class="primary" id="dSend">Send reply</button>
-          <span class="muted" id="dHint"></span>
+      <section class="card hidden" id="detail">
+        <h2>Ticket <span class="muted" id="dId" style="text-transform:none"></span></h2>
+        <div class="row" style="margin-bottom:8px">
+          <strong id="dSubject" style="flex:1 1 100%"></strong>
+          <span id="dPills"></span>
         </div>
-      </div>
-      <div class="row" style="margin-top:12px">
-        <select id="dStatus"></select>
-        <select id="dAssignee" style="min-width:150px"><option value="">unassigned</option></select>
-        <button id="dUpdate">Update</button>
-      </div>
-      <div style="margin-top:12px">
-        <div class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.03em;margin-bottom:4px">Routing history</div>
-        <div id="dRouting" class="muted" style="font-size:12px"></div>
-      </div>
-    </section>
-  </div>
+        <div id="dMsgs" style="max-height:280px;overflow:auto"></div>
+        <div style="margin-top:10px">
+          <textarea id="dReply" placeholder="Reply to the customer…"></textarea>
+          <div class="row" style="margin-top:6px">
+            <button id="dDraft">✨ Draft with AI</button>
+            <button class="primary" id="dSend">Send reply</button>
+            <span class="muted" id="dHint"></span>
+          </div>
+        </div>
+        <div class="row" style="margin-top:12px">
+          <select id="dStatus"></select>
+          <select id="dAssignee" style="min-width:150px"><option value="">unassigned</option></select>
+          <button id="dUpdate">Update</button>
+        </div>
+        <div style="margin-top:12px">
+          <div class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.03em;margin-bottom:4px">Routing history</div>
+          <div id="dRouting" class="muted" style="font-size:12px"></div>
+        </div>
+      </section>
+    </div>
+  </section>
 
-  <div class="split">
+  <!-- ============================== Agents -->
+  <section class="view" id="view-agents">
+    <h1 class="vt">Agents — human &amp; AI</h1>
     <section class="card">
-      <h2>Agents — human &amp; AI</h2>
       <div class="row" style="margin-bottom:8px">
         <select id="aKind"><option value="human">human</option><option value="ai">AI agent</option></select>
         <input id="aEmail" type="email" placeholder="email" style="width:170px" />
@@ -135,9 +179,12 @@
       </div>
       <div style="overflow:auto"><table id="agents"></table></div>
     </section>
+  </section>
 
+  <!-- ============================== Routing rules -->
+  <section class="view" id="view-routing">
+    <h1 class="vt">Routing rules <span class="muted" style="font-size:13px;font-weight:400">(first match wins; '' = any)</span></h1>
     <section class="card">
-      <h2>Routing rules <span class="muted" style="text-transform:none">(first match wins; '' = any)</span></h2>
       <div class="row" style="margin-bottom:8px">
         <input id="rPos" type="number" placeholder="pos" style="width:64px" value="100" title="lower wins" />
         <select id="rEvent"><option>created</option><option>customer_reply</option><option>escalation</option></select>
@@ -151,47 +198,52 @@
       </div>
       <div style="overflow:auto"><table id="rules"></table></div>
     </section>
-  </div>
+  </section>
 
-  <section class="card">
-    <h2>Knowledge base <span class="muted" style="text-transform:none">(powers deflection, ✨ drafts &amp; AI agents)</span></h2>
-    <div class="split">
-      <div>
-        <div style="overflow:auto"><table id="kb"></table></div>
-        <pre class="out hidden" id="kbView"></pre>
-      </div>
-      <div>
-        <input id="kbTitle" placeholder="Article title" style="width:100%;margin-bottom:6px" />
-        <textarea id="kbBody" placeholder="Markdown body — what should agents & the AI answer with?"></textarea>
-        <div class="row" style="margin-top:6px">
-          <button class="primary" id="kbAdd">Publish article</button>
-          <span class="muted" id="kbHint"></span>
+  <!-- ============================== Knowledge base -->
+  <section class="view" id="view-kb">
+    <h1 class="vt">Knowledge base <span class="muted" style="font-size:13px;font-weight:400">(powers deflection, ✨ drafts &amp; AI agents)</span></h1>
+    <section class="card">
+      <div class="split">
+        <div>
+          <div style="overflow:auto"><table id="kb"></table></div>
+          <pre class="out hidden" id="kbView"></pre>
         </div>
-        <p class="muted" style="font-size:12px;margin-bottom:0">
-          Articles are objects under <code>kb/</code> in the bucket — files dropped there
-          directly (<code>dodil k3 object create &lt;bucket&gt; kb/&lt;name&gt;.md --file …</code>)
-          are embedded too. Indexing takes ~20–30&nbsp;s.
-        </p>
+        <div>
+          <input id="kbTitle" placeholder="Article title" style="width:100%;margin-bottom:6px" />
+          <textarea id="kbBody" placeholder="Markdown body — what should agents & the AI answer with?"></textarea>
+          <div class="row" style="margin-top:6px">
+            <button class="primary" id="kbAdd">Publish article</button>
+            <span class="muted" id="kbHint"></span>
+          </div>
+          <p class="muted" style="font-size:12px;margin-bottom:0">
+            Articles are objects under <code>kb/</code> in the bucket — files dropped there
+            directly (<code>dodil k3 object create &lt;bucket&gt; kb/&lt;name&gt;.md --file …</code>)
+            are embedded too. Indexing takes ~20–30&nbsp;s.
+          </p>
+        </div>
       </div>
-    </div>
+    </section>
   </section>
 
-  <section class="card">
-    <h2>API keys</h2>
-    <div class="row" style="margin-bottom:8px">
-      <select id="kKind"><option value="public">public (project)</option><option value="admin">admin</option></select>
-      <input id="kLabel" placeholder="label" style="width:180px" />
-      <button id="kCreate">Create key</button>
-      <span class="muted" id="kHint"></span>
-    </div>
-    <div style="overflow:auto"><table id="keys"></table></div>
+  <!-- ============================== API keys -->
+  <section class="view" id="view-keys">
+    <h1 class="vt">API keys</h1>
+    <section class="card">
+      <div class="row" style="margin-bottom:8px">
+        <select id="kKind"><option value="public">public (project)</option><option value="admin">admin</option></select>
+        <input id="kLabel" placeholder="label" style="width:180px" />
+        <button id="kCreate">Create key</button>
+        <span class="muted" id="kHint"></span>
+      </div>
+      <div style="overflow:auto"><table id="keys"></table></div>
+    </section>
+    <p class="muted" style="font-size:12px">
+      All calls go to this portal's own server (<code>POST /api</code>), which holds the
+      admin key and proxies the private backend — the key never reaches the browser.
+    </p>
   </section>
-
-  <p class="muted" style="font-size:12px">
-    All calls go to this portal's own server (<code>POST /api</code>), which holds the
-    admin key and proxies the private backend — the key never reaches the browser.
-  </p>
-</div>
+</main>
 <script src="./app.js"></script>
 </body>
 </html>

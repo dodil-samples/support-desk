@@ -73,6 +73,11 @@ def _notify(agent: dict, ticket: dict) -> None:
         pass  # notification is best-effort, never blocks routing
 
 
+def _write_assignee(k3, ticket_id: str, aid: str) -> None:
+    k3.execute(f"UPDATE tickets SET assignee={sql_str(aid)}, updated_at={sql_str(now())} "
+               f"WHERE ticket_id={sql_str(ticket_id)}")
+
+
 # ------------------------------------------------------------------------- rule matching
 def _rules(k3, event: str) -> list[dict]:
     try:
@@ -169,17 +174,24 @@ def route_ticket(k3, ticket_id: str, event: str = "created") -> dict:
             chosen = _round_robin(pool)
 
     aid = chosen["agent_id"]
-    # Write-then-verify: concurrent UPDATEs to the same tickets row (e.g. the
-    # customer replying while the background chain is mid-flight) are
-    # last-writer-wins on the FULL row in the warehouse — a stale-snapshot
-    # commit can silently erase this assignment. Read it back and retry once.
-    for attempt in (1, 2):
-        k3.execute(f"UPDATE tickets SET assignee={sql_str(aid)}, updated_at={sql_str(now())} "
-                   f"WHERE ticket_id={sql_str(ticket_id)}")
-        if one(k3, f"SELECT assignee FROM tickets WHERE ticket_id={sql_str(ticket_id)}"
-               ).get("assignee") == aid:
-            break
-        time.sleep(1)  # let the competing write commit, then take the last word
+    _write_assignee(k3, ticket_id, aid)
+    # Drain-aware guard (verified live, twice): when the warehouse write-log
+    # drains, a RACING write from another connection (a customer reply landing
+    # while this chain runs) can shadow this update — even after a strong read
+    # confirmed it. Re-check past the drain window and re-assert, but ONLY if
+    # the field reverted to empty: an admin who reassigned meanwhile wins.
+    def _reassert():
+        for delay in (10, 90):
+            time.sleep(delay)
+            try:
+                cur = one(k3, f"SELECT assignee FROM tickets "
+                              f"WHERE ticket_id={sql_str(ticket_id)}").get("assignee") or ""
+                if cur == aid or cur:
+                    continue
+                _write_assignee(k3, ticket_id, aid)
+            except Exception:
+                return
+    threading.Thread(target=_reassert, daemon=True).start()
     k3.execute(f"UPDATE agents SET last_assigned_at={sql_str(now())} "
                f"WHERE agent_id={sql_str(aid)}")
     agents.invalidate()

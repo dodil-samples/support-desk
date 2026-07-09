@@ -1,8 +1,23 @@
 /*
  * Agent inbox — talks ONLY to its own origin (POST /api); the server proxies the
  * admin backend and injects the admin key. No configuration in the page.
+ *
+ * Shell: left navigation + hash-routed views (#dashboard/#tickets/#agents/
+ * #routing/#kb/#keys) — a tiny router, no framework.
  */
 const $ = (id) => document.getElementById(id);
+
+// ---------------------------------------------------------------- router
+const NAV = document.querySelectorAll("#nav a[data-view]");
+function show(view) {
+  if (!document.getElementById("view-" + view)) view = "dashboard";
+  document.querySelectorAll(".view").forEach((s) =>
+    s.classList.toggle("active", s.id === "view-" + view));
+  NAV.forEach((a) => a.classList.toggle("active", a.dataset.view === view));
+  if (location.hash !== "#" + view) history.replaceState(null, "", "#" + view);
+}
+NAV.forEach((a) => a.addEventListener("click", (e) => { e.preventDefault(); show(a.dataset.view); }));
+window.addEventListener("hashchange", () => show(location.hash.slice(1)));
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
 
 // Mirrors STATUSES in actions/common.py — the backend rejects anything else.
@@ -283,4 +298,5 @@ $("rPriority").innerHTML = `<option value="">any priority</option>` +
 $("statusFilter").addEventListener("change", loadInbox);
 $("assigneeFilter").addEventListener("change", loadInbox);
 $("refresh").addEventListener("click", () => { loadAgents().then(loadInbox); loadRules(); loadKb(); loadKeys(); });
+show(location.hash.slice(1) || "dashboard");
 loadAgents().then(loadInbox); loadRules(); loadKb(); loadKeys();

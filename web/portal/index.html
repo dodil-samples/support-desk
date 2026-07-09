@@ -20,14 +20,33 @@
     }
   }
   * { box-sizing:border-box; }
-  body { margin:0; background:var(--plane); color:var(--ink); font-family:var(--font); font-size:14px; line-height:1.5; }
-  code { font-size:12px; }
-  .wrap { max-width:760px; margin:0 auto; padding:20px 16px 64px; }
-  header.top { display:flex; align-items:center; gap:10px; padding-bottom:12px;
-               border-bottom:1px solid var(--border); margin-bottom:24px; }
-  header.top h1 { font-size:18px; margin:0; font-weight:700; }
-  .badge { font-size:11px; padding:2px 8px; border-radius:999px; border:1px solid var(--border);
-           color:var(--good); background:var(--surface); }
+  body { margin:0; background:var(--plane); color:var(--ink); font-family:var(--font);
+         font-size:14px; line-height:1.5; display:grid; grid-template-columns:212px 1fr;
+         min-height:100vh; }
+
+  /* ---- left navigation ---- */
+  aside.side { background:var(--surface); border-right:1px solid var(--border);
+               padding:16px 10px; display:flex; flex-direction:column; gap:4px;
+               position:sticky; top:0; height:100vh; }
+  .brand { font-weight:700; font-size:15px; padding:4px 10px 14px; display:flex;
+           align-items:center; gap:8px; }
+  .badge { font-size:10px; padding:2px 8px; border-radius:999px; border:1px solid var(--border);
+           color:var(--good); background:var(--plane); font-weight:600; }
+  nav a { display:flex; align-items:center; gap:9px; padding:8px 10px; border-radius:8px;
+          color:var(--ink2); text-decoration:none; font-weight:500; cursor:pointer; }
+  nav a:hover { background:color-mix(in srgb, var(--accent) 7%, transparent); }
+  nav a.active { background:color-mix(in srgb, var(--accent) 13%, transparent);
+                 color:var(--ink); font-weight:600; }
+  nav a .ico { width:18px; text-align:center; }
+  .side-foot { margin-top:auto; padding:10px; font-size:12px; color:var(--muted);
+               overflow-wrap:anywhere; }
+
+  /* ---- content ---- */
+  main { padding:22px 26px 64px; min-width:0; max-width:760px; }
+  .view { display:none; }
+  .view.active { display:block; }
+  h1.vt { font-size:17px; margin:0 0 16px; font-weight:700; }
+
   button, input, textarea { font-family:var(--font); font-size:13px; }
   button { cursor:pointer; border:1px solid var(--border); background:var(--surface); color:var(--ink);
            padding:8px 14px; border-radius:8px; }
@@ -54,89 +73,112 @@
   pre.out { background:var(--plane); border:1px solid var(--border); border-radius:8px; padding:10px;
             overflow:auto; font-size:12px; max-height:200px; margin:8px 0 0;
             white-space:pre-wrap; word-break:break-word; }
+
+  @media (max-width:760px) {
+    body { grid-template-columns:1fr; }
+    aside.side { position:static; height:auto; flex-direction:row; align-items:center;
+                 overflow-x:auto; border-right:none; border-bottom:1px solid var(--border); }
+    .brand { padding:4px 10px; } nav { display:flex; gap:2px; } .side-foot { margin:0; padding:0 6px; }
+    main { padding:16px 14px 48px; }
+  }
 </style>
 </head>
 <body>
-<div class="wrap">
-  <header class="top">
-    <h1>Help Center</h1>
-    <span class="badge">customer portal</span>
-    <span id="acctBadge" class="muted" style="margin-left:auto;font-size:12px"></span>
-  </header>
+<aside class="side">
+  <div class="brand">Help Center <span class="badge">support</span></div>
+  <nav id="nav">
+    <a data-view="help"><span class="ico">🔎</span> Find answers</a>
+    <a data-view="submit"><span class="ico">✉️</span> Open a ticket</a>
+    <a data-view="status"><span class="ico">📄</span> Check a ticket</a>
+    <a data-view="mine" id="navMine"><span class="ico">👤</span> My tickets</a>
+  </nav>
+  <div class="side-foot" id="acctBadge"></div>
+</aside>
 
-  <!-- Sign in (shown only when the backend has an AUTH_MODE; see auth_config) -->
-  <section class="card hidden" id="acctCard">
-    <h2>Your account</h2>
-    <div id="acctOut">
-      <div id="signinEmailStep">
-        <div class="row"><input id="aEmail" class="grow" type="email" placeholder="you@example.com" />
-          <button class="primary" id="aSend">Email me a code</button></div>
-        <div class="muted" id="aHint" style="font-size:12px;margin-top:6px"></div>
+<main>
+  <!-- ============================== Find answers -->
+  <section class="view" id="view-help">
+    <h1 class="vt">How can we help?</h1>
+    <section class="card">
+      <div class="fld">Search the knowledge base
+        <div class="row"><input id="kbQ" class="grow" placeholder="e.g. duplicate charge refund" />
+          <button id="kbBtn">Search</button></div>
       </div>
-      <div id="signinCodeStep" class="hidden">
-        <div class="row"><input id="aCode" class="grow" placeholder="6-digit code" autocomplete="one-time-code" />
-          <button class="primary" id="aVerify">Sign in</button></div>
-        <div class="muted" id="aCodeHint" style="font-size:12px;margin-top:6px"></div>
+      <div id="kbOut"></div>
+    </section>
+    <p class="muted" style="font-size:12px">
+      This portal only talks to its own server (<code>POST /api</code>), which proxies the
+      public support backend. Ticket triage happens in the background — your ticket is
+      filed instantly.
+    </p>
+  </section>
+
+  <!-- ============================== Open a ticket -->
+  <section class="view" id="view-submit">
+    <h1 class="vt">Open a ticket</h1>
+    <section class="card">
+      <div class="fld">Subject <input id="tSubject" placeholder="Short summary" /></div>
+      <div class="fld">What happened? <textarea id="tBody" placeholder="Describe the issue"></textarea></div>
+      <div class="fld">Your email <input id="tEmail" type="email" placeholder="you@example.com" /></div>
+      <div class="row"><button class="primary" id="tSend">Submit ticket</button>
+        <span class="muted" id="tHint"></span></div>
+      <div id="tConfirm" class="confirm hidden"></div>
+      <div id="deflect" class="hidden" style="margin-top:12px">
+        <div class="muted" style="font-size:12px;margin-bottom:6px">While you wait — these articles may help:</div>
+        <div id="deflectOut"></div>
       </div>
-      <div id="oidcStep" class="hidden">
-        <a href="/auth/login"><button class="primary">Sign in with your organization</button></a>
+    </section>
+  </section>
+
+  <!-- ============================== Check a ticket -->
+  <section class="view" id="view-status">
+    <h1 class="vt">Check a ticket</h1>
+    <section class="card">
+      <div class="row">
+        <input id="sId" class="grow" placeholder="ticket_id (t_…)" />
+        <input id="sEmail" class="grow" type="email" placeholder="email you used" />
+        <button id="sBtn">Check status</button>
       </div>
-    </div>
+      <div id="sOut" style="margin-top:10px"></div>
+      <div id="replyBox" class="hidden" style="margin-top:10px">
+        <div class="row"><textarea id="rBody" class="grow" placeholder="Reply to this ticket…" style="min-height:56px"></textarea></div>
+        <div class="row" style="margin-top:6px"><button class="primary" id="rSend">Send reply</button>
+          <span class="muted" id="rHint" style="font-size:12px"></span></div>
+      </div>
+    </section>
   </section>
 
-  <!-- My tickets (signed-in only) -->
-  <section class="card hidden" id="mineCard">
-    <h2>My tickets</h2>
-    <div id="mineOut"><span class="muted">…</span></div>
+  <!-- ============================== My tickets / account -->
+  <section class="view" id="view-mine">
+    <h1 class="vt">My tickets</h1>
+    <section class="card hidden" id="acctCard">
+      <h2>Sign in to see all your tickets</h2>
+      <div id="acctOut">
+        <div id="signinEmailStep">
+          <div class="row"><input id="aEmail" class="grow" type="email" placeholder="you@example.com" />
+            <button class="primary" id="aSend">Email me a code</button></div>
+          <div class="muted" id="aHint" style="font-size:12px;margin-top:6px"></div>
+        </div>
+        <div id="signinCodeStep" class="hidden">
+          <div class="row"><input id="aCode" class="grow" placeholder="6-digit code" autocomplete="one-time-code" />
+            <button class="primary" id="aVerify">Sign in</button></div>
+          <div class="muted" id="aCodeHint" style="font-size:12px;margin-top:6px"></div>
+        </div>
+        <div id="oidcStep" class="hidden">
+          <a href="/auth/login"><button class="primary">Sign in with your organization</button></a>
+        </div>
+      </div>
+    </section>
+    <section class="card hidden" id="mineCard">
+      <h2>Your tickets</h2>
+      <div id="mineOut"><span class="muted">…</span></div>
+    </section>
+    <p class="muted hidden" id="mineAnonNote" style="font-size:12px">
+      Sign-in is disabled on this deployment — use “Check a ticket” with your
+      ticket id and email instead.
+    </p>
   </section>
-
-  <!-- KB search / deflection -->
-  <section class="card">
-    <h2>How can we help?</h2>
-    <div class="fld">Search the knowledge base
-      <div class="row"><input id="kbQ" class="grow" placeholder="e.g. duplicate charge refund" />
-        <button id="kbBtn">Search</button></div>
-    </div>
-    <div id="kbOut"></div>
-  </section>
-
-  <!-- Submit -->
-  <section class="card">
-    <h2>Still stuck? Open a ticket</h2>
-    <div class="fld">Subject <input id="tSubject" placeholder="Short summary" /></div>
-    <div class="fld">What happened? <textarea id="tBody" placeholder="Describe the issue"></textarea></div>
-    <div class="fld">Your email <input id="tEmail" type="email" placeholder="you@example.com" /></div>
-    <div class="row"><button class="primary" id="tSend">Submit ticket</button>
-      <span class="muted" id="tHint"></span></div>
-    <div id="tConfirm" class="confirm hidden"></div>
-    <div id="deflect" class="hidden" style="margin-top:12px">
-      <div class="muted" style="font-size:12px;margin-bottom:6px">While you wait — these articles may help:</div>
-      <div id="deflectOut"></div>
-    </div>
-  </section>
-
-  <!-- Status -->
-  <section class="card">
-    <h2>Check a ticket</h2>
-    <div class="row">
-      <input id="sId" class="grow" placeholder="ticket_id (t_…)" />
-      <input id="sEmail" class="grow" type="email" placeholder="email you used" />
-      <button id="sBtn">Check status</button>
-    </div>
-    <div id="sOut" style="margin-top:10px"></div>
-    <div id="replyBox" class="hidden" style="margin-top:10px">
-      <div class="row"><textarea id="rBody" class="grow" placeholder="Reply to this ticket…" style="min-height:56px"></textarea></div>
-      <div class="row" style="margin-top:6px"><button class="primary" id="rSend">Send reply</button>
-        <span class="muted" id="rHint" style="font-size:12px"></span></div>
-    </div>
-  </section>
-
-  <p class="muted" style="font-size:12px">
-    This portal only talks to its own server (<code>POST /api</code>), which proxies the
-    public support backend. Ticket triage happens in the background — your ticket is
-    filed instantly.
-  </p>
-</div>
+</main>
 <script src="./app.js"></script>
 </body>
 </html>
