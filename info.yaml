@@ -13,10 +13,13 @@ input:
     action:
       type: string
       # PUBLIC (anon-safe): submit_ticket, ticket_status, search_kb
-      # PRIVATE (admin key): create_ticket, add_message, triage, suggest_reply, add_kb,
-      #   get_ticket, list_tickets, set_status, assign, rate, stats, export_tickets,
-      #   create_key, list_keys, revoke_key
+      # PUBLIC identity (lib/identity.py): auth_config, request_code, verify_code,
+      #   whoami — plus my_tickets / reply_ticket, which require a signed-in session
+      # PRIVATE (admin key OR agent-role identity): create_ticket, add_message,
+      #   triage, suggest_reply, add_kb, get_ticket, list_tickets, set_status,
+      #   assign, rate, stats, export_tickets, create_key, list_keys, revoke_key
       enum: [submit_ticket, ticket_status, search_kb,
+             auth_config, request_code, verify_code, whoami, my_tickets, reply_ticket,
              create_ticket, add_message, triage, suggest_reply, add_kb,
              get_ticket, list_tickets, set_status, assign, rate, stats, export_tickets,
              create_key, list_keys, revoke_key]
@@ -26,6 +29,14 @@ input:
         API key in the request body. A project (public) key authorizes PUBLIC
         actions; an admin key authorizes PRIVATE actions. Omit when the app's key
         tiers are unconfigured (open).
+    session:
+      type: string
+      description: >
+        Identity credential (AUTH_MODE adapters, lib/identity.py): the signed
+        session from verify_code (email mode) or the IdP access token (oidc
+        mode). The portal server injects it from an HttpOnly cookie.
+    email: { type: string }
+    code: { type: string }
     subject: { type: string }
     body: { type: string }
     requester_email: { type: string }
@@ -59,6 +70,15 @@ env:
   # private tier under APP_ROLE=admin, which refuses to run without ADMIN_KEYS.
   - ADMIN_KEYS      # authorizes PRIVATE actions (agent inbox, admin, key mgmt)
   - PUBLIC_KEYS     # authorizes PUBLIC actions (submit_ticket, ticket_status, search_kb)
+  # Identity seam (lib/identity.py) — plug in ANY auth system, or none:
+  - AUTH_MODE       # none (default) | email | oidc | header
+  - SESSION_SECRET  # email mode: HMAC key for codes + sessions (required)
+  - SEND_MODE       # email mode: test (log codes; demo_code in response) | webhook
+  - MAIL_WEBHOOK_URL # email mode + SEND_MODE=webhook: POST {to,subject,text} here
+  - OIDC_ISSUER     # oidc mode: issuer URL; tokens validated via its userinfo endpoint
+  - PROXY_SECRET    # header mode: shared secret the auth proxy asserts identities with
+  - AGENT_EMAILS    # comma-separated emails promoted to the agent role
+  - AGENT_DOMAINS   # comma-separated domains promoted to the agent role
 
 test_input:
   action: create_ticket

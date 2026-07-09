@@ -56,6 +56,27 @@ API_KEYS_COLUMNS = [
     col("disabled", T_INT),
 ]
 
+# Passwordless sign-in codes (AUTH_MODE=email, lib/identity.py). Only HMACs are
+# stored — a warehouse reader learns nothing usable. `used` makes them single-use.
+LOGIN_CODES_COLUMNS = [
+    col("code_id", T_STRING, nullable=False),
+    col("email", T_STRING),
+    col("code_hash", T_STRING),
+    col("magic_hash", T_STRING),
+    col("expires_at", T_STRING),
+    col("used", T_INT),
+    col("created_at", T_STRING),
+]
+
+# Emails whose owner proved control of them (verified via any AUTH_MODE adapter).
+# Verification is a property of the EMAIL, not the ticket — tickets are annotated
+# by lookup, so adding this feature needed no tickets-table migration.
+VERIFIED_EMAILS_COLUMNS = [
+    col("email", T_STRING, nullable=False),
+    col("verified_at", T_STRING),
+    col("mode", T_STRING),              # email | oidc | header
+]
+
 
 def k3() -> K3:
     return K3(BUCKET)
@@ -67,7 +88,8 @@ def ensure() -> K3:
     if not _state["base"]:
         c.ensure_bucket("Support desk: tickets, messages, KB")
         for name, cols in (("tickets", TICKETS_COLUMNS), ("messages", MESSAGES_COLUMNS),
-                           ("api_keys", API_KEYS_COLUMNS)):
+                           ("api_keys", API_KEYS_COLUMNS), ("login_codes", LOGIN_CODES_COLUMNS),
+                           ("verified_emails", VERIFIED_EMAILS_COLUMNS)):
             try:
                 c.create_table(name, cols, merge_keys=[cols[0]["name"]])
             except Exception:

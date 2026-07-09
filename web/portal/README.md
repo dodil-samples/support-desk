@@ -24,6 +24,12 @@ Design notes:
   case the collection is still indexing. Neither ever blocks submission.
 - **Status is an enum** — `new | open | pending | solved`, mirrored from
   `handler.py` `STATUSES` and rendered as friendly labels/pills.
+- **Sign-in is optional and adapter-driven** — the page asks `auth_config` and
+  only then shows the "Your account" card: email+code (AUTH_MODE=email) or a
+  redirect to your IdP (AUTH_MODE=oidc, this server runs the code flow). The
+  session lives in an **HttpOnly cookie** set by this server and is injected
+  into each proxied call — browser JS never sees a token. Signed-in customers
+  get **My tickets** and in-portal replies.
 
 Deploy on Ignite (BYOI): see the [Dockerfile](Dockerfile) header.
 

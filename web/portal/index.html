@@ -61,7 +61,34 @@
   <header class="top">
     <h1>Help Center</h1>
     <span class="badge">customer portal</span>
+    <span id="acctBadge" class="muted" style="margin-left:auto;font-size:12px"></span>
   </header>
+
+  <!-- Sign in (shown only when the backend has an AUTH_MODE; see auth_config) -->
+  <section class="card hidden" id="acctCard">
+    <h2>Your account</h2>
+    <div id="acctOut">
+      <div id="signinEmailStep">
+        <div class="row"><input id="aEmail" class="grow" type="email" placeholder="you@example.com" />
+          <button class="primary" id="aSend">Email me a code</button></div>
+        <div class="muted" id="aHint" style="font-size:12px;margin-top:6px"></div>
+      </div>
+      <div id="signinCodeStep" class="hidden">
+        <div class="row"><input id="aCode" class="grow" placeholder="6-digit code" autocomplete="one-time-code" />
+          <button class="primary" id="aVerify">Sign in</button></div>
+        <div class="muted" id="aCodeHint" style="font-size:12px;margin-top:6px"></div>
+      </div>
+      <div id="oidcStep" class="hidden">
+        <a href="/auth/login"><button class="primary">Sign in with your organization</button></a>
+      </div>
+    </div>
+  </section>
+
+  <!-- My tickets (signed-in only) -->
+  <section class="card hidden" id="mineCard">
+    <h2>My tickets</h2>
+    <div id="mineOut"><span class="muted">…</span></div>
+  </section>
 
   <!-- KB search / deflection -->
   <section class="card">
@@ -97,6 +124,11 @@
       <button id="sBtn">Check status</button>
     </div>
     <div id="sOut" style="margin-top:10px"></div>
+    <div id="replyBox" class="hidden" style="margin-top:10px">
+      <div class="row"><textarea id="rBody" class="grow" placeholder="Reply to this ticket…" style="min-height:56px"></textarea></div>
+      <div class="row" style="margin-top:6px"><button class="primary" id="rSend">Send reply</button>
+        <span class="muted" id="rHint" style="font-size:12px"></span></div>
+    </div>
   </section>
 
   <p class="muted" style="font-size:12px">

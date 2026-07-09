@@ -27,7 +27,7 @@ import uuid
 # Make the app's own modules importable regardless of the launcher's cwd.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from lib import gate, models
+from lib import gate, identity, models
 from lib.k3 import K3Error
 import bootstrap
 
@@ -186,16 +186,29 @@ def submit_ticket(k3, p: dict) -> dict:
     updates the row when it lands (TRIAGE_DEFAULTS until then), and KB
     suggestions are NOT bundled here — the portal fires `search_kb` as its own
     call. Response is customer-safe only: a status token (ticket_id + email).
+
+    Signed-in callers (any AUTH_MODE adapter) get their identity's email as the
+    requester — proven, so the ticket counts as verified immediately. Anonymous
+    submissions still land instantly but stay unverified until the requester
+    signs in once (Zendesk gates activation on this; we only annotate).
     """
+    ident = p.get("_identity")
+    if ident and not p.get("requester_email"):
+        p = {**p, "requester_email": ident["email"]}
     subject = p.get("subject", "(no subject)")
     body = p.get("body", "")
     tid = "t_" + uuid.uuid4().hex[:12]
     k3.upsert("tickets", [_new_ticket_row(tid, p, TRIAGE_DEFAULTS)])
     _store_message(k3, tid, p.get("requester_email", "customer"), "customer", body)
     _triage_async(k3, tid, subject, body)
+    verified = bool(ident and ident.get("verified")
+                    and ident["email"] == str(p.get("requester_email", "")).strip().lower())
+    if verified:
+        identity.mark_verified(k3, ident["email"])
     return {
         "ticket_id": tid,
         "status": "new",
+        "verified": verified,
         "message": "Thanks — your request was received. Use ticket_status with your "
                    "ticket_id and email to check progress.",
     }
@@ -205,10 +218,12 @@ def ticket_status(k3, p: dict) -> dict:
     """PUBLIC: a customer checks their own ticket by id + the email they used.
 
     The email must match the ticket's requester_email — so a public caller can
-    only ever see the one ticket they opened, never anyone else's.
+    only ever see the one ticket they opened, never anyone else's. A signed-in
+    caller's identity email is used automatically (no need to retype it).
     """
     tid = p.get("ticket_id", "")
-    email = str(p.get("requester_email", "")).strip().lower()
+    ident = p.get("_identity")
+    email = str(p.get("requester_email") or (ident or {}).get("email") or "").strip().lower()
     t = _one(k3, "SELECT ticket_id, subject, status, priority, category, requester_email, "
                  f"created_at, updated_at, solved_at FROM tickets WHERE ticket_id={_sql_str(tid)}")
     if not t or str(t.get("requester_email", "")).strip().lower() != email or not email:
@@ -219,6 +234,55 @@ def ticket_status(k3, p: dict) -> dict:
     )
     t.pop("requester_email", None)  # don't echo PII back
     return {"ticket": t, "messages": msgs}
+
+
+def _require_identity(p: dict) -> dict | None:
+    ident = p.get("_identity")
+    if not ident or not ident.get("verified"):
+        return None
+    return ident
+
+
+def my_tickets(k3, p: dict) -> dict:
+    """PUBLIC + signed-in: every ticket belonging to the caller's PROVEN email.
+
+    This listing is safe only because the email is verified by an identity
+    adapter — the anonymous flow deliberately has no list-by-email (an address
+    alone is guessable and would leak other people's ticket existence).
+    """
+    ident = _require_identity(p)
+    if not ident:
+        return {"error": "sign in to list your tickets (see auth_config)", "code": 401}
+    esc = ident["email"].replace("'", "''")
+    rows = k3.execute(
+        f"SELECT ticket_id, subject, status, priority, category, created_at, updated_at "
+        f"FROM tickets WHERE lower(requester_email)='{esc}' "
+        f"ORDER BY created_at DESC LIMIT {int(p.get('limit', 50))}")
+    return {"email": ident["email"], "count": len(rows), "tickets": rows}
+
+
+def reply_ticket(k3, p: dict) -> dict:
+    """PUBLIC + signed-in: the customer replies to THEIR OWN ticket from the portal.
+
+    Ownership check against the proven identity email; a reply to a solved
+    ticket reopens it (Zendesk semantics).
+    """
+    ident = _require_identity(p)
+    if not ident:
+        return {"error": "sign in to reply to your ticket (see auth_config)", "code": 401}
+    tid = str(p.get("ticket_id", ""))
+    body = str(p.get("body", "")).strip()
+    if not body:
+        return {"error": "reply body is required"}
+    t = _one(k3, f"SELECT requester_email, status FROM tickets WHERE ticket_id={_sql_str(tid)}")
+    if not t or str(t.get("requester_email", "")).strip().lower() != ident["email"]:
+        return {"error": "no ticket found for that id + your email"}
+    msg = _store_message(k3, tid, ident["email"], "customer", body)
+    reopen = ", status='open'" if t.get("status") == "solved" else ""
+    k3.execute(f"UPDATE tickets SET updated_at={_sql_str(_now())}{reopen} "
+               f"WHERE ticket_id={_sql_str(tid)}")
+    return {"ticket_id": tid, "message_id": msg["message_id"],
+            "reopened": bool(reopen)}
 
 
 def add_message(k3, p: dict) -> dict:
@@ -280,6 +344,9 @@ def add_kb(k3, p: dict) -> dict:
 def get_ticket(k3, p: dict) -> dict:
     tid = p["ticket_id"]
     ticket = _one(k3, f"SELECT * FROM tickets WHERE ticket_id={_sql_str(tid)}")
+    if ticket:
+        ticket["requester_verified"] = bool(
+            identity.verified_emails(k3, [ticket.get("requester_email", "")]))
     msgs = k3.execute(
         f"SELECT message_id, author, role, snippet, created_at FROM messages "
         f"WHERE ticket_id={_sql_str(tid)} ORDER BY created_at"
@@ -301,6 +368,11 @@ def list_tickets(k3, p: dict) -> dict:
         f"requester_email, created_at FROM tickets{clause} "
         f"ORDER BY created_at DESC LIMIT {limit}"
     )
+    # Annotate each row with whether its requester proved their email — a spam
+    # signal for agents. One IN query in Python, no JOIN (see bootstrap notes).
+    proven = identity.verified_emails(k3, [r.get("requester_email", "") for r in rows])
+    for r in rows:
+        r["requester_verified"] = str(r.get("requester_email", "")).strip().lower() in proven
     return {"count": len(rows), "tickets": rows}
 
 
@@ -451,6 +523,10 @@ def _latest_customer_body(k3, tid: str) -> str:
 ACTIONS = {
     # -- PUBLIC (anon-safe: customer-facing) --
     "submit_ticket": submit_ticket, "ticket_status": ticket_status, "search_kb": search_kb,
+    # -- PUBLIC identity (lib/identity.py; my_tickets/reply_ticket need a session) --
+    "auth_config": identity.auth_config, "request_code": identity.request_code,
+    "verify_code": identity.verify_code, "whoami": identity.whoami,
+    "my_tickets": my_tickets, "reply_ticket": reply_ticket,
     # -- PRIVATE (admin key: the agent inbox) --
     "create_ticket": create_ticket, "add_message": add_message, "triage": triage,
     "suggest_reply": suggest_reply, "add_kb": add_kb,
@@ -480,12 +556,20 @@ def handler(event, context):
 
     try:
         k3 = bootstrap.ensure()
+        # Who is calling? (AUTH_MODE adapter — anonymous is a valid answer.)
+        ident = identity.identify(event)
+        event["_identity"] = ident
         # Public/private gate: PUBLIC actions are anon-safe (optionally project-keyed),
-        # PRIVATE actions need an admin key. Unconfigured tiers stay open (see gate.py).
-        decision = gate.authorize(k3, action, event)
+        # PRIVATE actions need an admin key OR an agent-role identity. Unconfigured
+        # tiers stay open (see gate.py).
+        decision = gate.authorize(k3, action, event, ident)
         if not decision["ok"]:
             return {"ok": False, "action": action, "error": decision["error"], "code": 401}
-        return {"ok": True, "action": action, "result": fn(k3, event)}
+        result = fn(k3, event)
+        code = result.pop("code", None) if isinstance(result, dict) else None
+        if isinstance(result, dict) and "error" in result and code:
+            return {"ok": False, "action": action, "error": result["error"], "code": code}
+        return {"ok": True, "action": action, "result": result}
     except K3Error as e:
         return {"ok": False, "action": action, "error": f"k3: {e}"}
     except Exception as e:  # noqa: BLE001 — surface a clean error to the caller

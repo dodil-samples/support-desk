@@ -34,7 +34,14 @@ import os
 import uuid
 
 # Actions any anonymous caller may run. Everything else is PRIVATE.
-PUBLIC_ACTIONS = {"submit_ticket", "ticket_status", "search_kb"}
+PUBLIC_ACTIONS = {
+    "submit_ticket", "ticket_status", "search_kb",
+    # identity endpoints (lib/identity.py) — safe anonymously by construction
+    "auth_config", "request_code", "verify_code", "whoami",
+    # signed-in customer actions — exposed publicly, but each one requires a
+    # verified identity and enforces ownership itself (see handler.py)
+    "my_tickets", "reply_ticket",
+}
 
 # Which tier this deployment serves. The realistic layout is TWO apps over one
 # codebase: APP_ROLE=public (customer backend — PUBLIC_ACTIONS only, anon FQDN)
@@ -98,24 +105,30 @@ def _resolve_keys(k3) -> tuple[set[str], set[str], bool, bool]:
     return admin, public, bool(admin), bool(public)
 
 
-def authorize(k3, action: str, payload: dict) -> dict:
+def authorize(k3, action: str, payload: dict, identity: dict | None = None) -> dict:
     """Decide whether ``action`` may run given the key on the payload.
 
     Admin keys are a superset of public — an admin key satisfies any tier.
+    Keys are the MACHINE credential (widgets, webhooks, the inbox proxy); a
+    resolved human identity (lib/identity.py) works alongside them: a signed-in
+    user passes the public tier without a project key, and an ``agent``-role
+    identity satisfies the admin tier exactly like an admin key.
     Returns ``{"ok": bool, "role": str, "error": str?}``.
     """
     provided = str(payload.get("key") or payload.get("admin_key") or payload.get("public_key") or "")
     admin, public, admin_configured, public_configured = _resolve_keys(k3)
     is_admin = bool(provided) and provided in admin
+    is_agent = bool(identity) and identity.get("role") == "agent"
     is_public = bool(provided) and provided in public
-    role = "admin" if is_admin else "public" if is_public else "anon"
+    role = "admin" if (is_admin or is_agent) else "public" if is_public else \
+           "user" if identity else "anon"
 
     if is_public_action(action):
-        if (not public_configured) or is_public or is_admin:
+        if (not public_configured) or is_public or is_admin or bool(identity):
             return {"ok": True, "role": role}
         return {"ok": False, "role": role, "error": "a valid project key is required (payload.key)"}
     # PRIVATE
-    if is_admin:
+    if is_admin or is_agent:
         return {"ok": True, "role": role}
     if not admin_configured:
         # A dedicated admin backend must never run open — the graceful default

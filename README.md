@@ -21,11 +21,13 @@ support-desk-public                      support-desk-admin
    └────────────── one codebase ───────────┘
                        │
               handler.py (router on `action`)
-                 ├─ lib/gate.py    public/private tiers + APP_ROLE + API keys
-                 ├─ lib/auth.py    service account ─► bearer (OIDC client_credentials)
-                 ├─ lib/k3.py      objects · tables (_execute/insert/merge) · vector/search
-                 ├─ lib/models.py  /v1/chat/completions · /v1/embeddings
-                 └─ bootstrap.py   idempotent bucket + tables + kb collection
+                 ├─ lib/gate.py     public/private tiers + APP_ROLE + API keys
+                 ├─ lib/identity.py WHO is calling — AUTH_MODE adapter seam (none/email/oidc/header)
+                 ├─ lib/mailer.py   send_email(to,subject,text) — provider-agnostic seam
+                 ├─ lib/auth.py     service account ─► bearer (OIDC client_credentials)
+                 ├─ lib/k3.py       objects · tables (_execute/insert/merge) · vector/search
+                 ├─ lib/models.py   /v1/chat/completions · /v1/embeddings
+                 └─ bootstrap.py    idempotent bucket + tables + kb collection
 ```
 
 Design principles this sample demonstrates:
@@ -41,6 +43,10 @@ Design principles this sample demonstrates:
 - **State is an enum.** Ticket status is `new | open | pending | solved`
   (`STATUSES` in [`handler.py`](handler.py)), enforced by the backend, declared
   in [`info.yaml`](info.yaml), mirrored by both portals.
+- **Identity is a seam, not a framework.** `AUTH_MODE` env plugs in any auth
+  system (OIDC IdP, auth proxy) or the built-in passwordless email sign-in —
+  see [Sign-in: plug in any auth](#sign-in-plug-in-any-auth-auth_mode). The
+  default is `none`: everything below works with zero identity config.
 
 ---
 
@@ -178,6 +184,31 @@ query while the fresh vector collection loads). The portal's deflection search
 and the inbox's ✨ *Draft with AI* (`suggest_reply`, grounded in KB hits) both
 work from this.
 
+### 6. Optional: turn on sign-in (verified end-to-end with Playwright)
+
+Redeploy the backends with the built-in passwordless email adapter — no other
+infrastructure needed (`SEND_MODE=test` logs the codes and surfaces them as
+`demo_code`, so the demo needs no mail provider):
+
+```bash
+SESSION_SECRET=$(openssl rand -hex 24)
+# add to BOTH backend deploys in step 2 (and redeploy):
+#   --env AUTH_MODE=email --env SESSION_SECRET=$SESSION_SECRET \
+#   --env SEND_MODE=test  --env AGENT_DOMAINS=yourcompany.com
+```
+
+The portal now grows a **Your account** card (email → code → signed in), a
+**My tickets** list, and in-portal replies; the inbox marks proven requesters
+with ✓. Signed-in flow measured live: code verify <1 s, submit still ~0.7 s.
+The whole browser journey is scripted in [`web/ui_test.mjs`](web/ui_test.mjs)
+(Playwright — 19 checks, run live against this deployment):
+
+```bash
+PORTAL_URL=$PORTAL INBOX_URL=$INBOX node web/ui_test.mjs
+```
+See [Sign-in: plug in any auth](#sign-in-plug-in-any-auth-auth_mode) for the
+OIDC / auth-proxy adapters and how mail leaves in production.
+
 ### Teardown
 
 ```bash
@@ -190,13 +221,55 @@ dodil auth service-account delete <uuid> # don't leave a dangling credential
 
 ---
 
+## Sign-in: plug in any auth (`AUTH_MODE`)
+
+Identity is one seam ([`lib/identity.py`](lib/identity.py)): every action just
+consumes `{email, name, role, verified}`, and `AUTH_MODE` picks the adapter
+that produces it. This is how the sample stays **fast-install on any stack** —
+swapping auth systems is an env change, never a code change.
+
+| `AUTH_MODE` | plugs into | env | how it works |
+|---|---|---|---|
+| `none` (default) | nothing | — | today's anonymous flow: submit + `ticket_id`+email status checks. Zero config. |
+| `email` | nothing — built-in | `SESSION_SECRET`, `SEND_MODE` (+`MAIL_WEBHOOK_URL`) | passwordless: `request_code` mails a 6-digit code + one-time token (single-use, 15 min, only HMACs stored); `verify_code` mints a signed stateless session (7 days). Stdlib only. |
+| `oidc` | **any OIDC IdP** — Keycloak, Auth0, Authentik, Supabase, Clerk… | `OIDC_ISSUER` | caller presents the IdP's access token (`session` field); the backend validates it against the issuer's discovered **`userinfo` endpoint** (cached 60 s) — no JWT crypto dependency, opaque tokens work, revocation honored. The portal server runs the standard code flow (`/auth/login` → `/auth/callback`) with `OIDC_ISSUER` + `OIDC_CLIENT_ID`(+`_SECRET`). |
+| `header` | **any auth proxy** — oauth2-proxy, Authelia, Cloudflare Access | `PROXY_SECRET` | the proxy terminates auth and asserts the user it established (`proxy_email` + `proxy_secret` on the body) — the forward-auth pattern; the app never speaks the IdP's protocol at all. |
+
+What a signed-in identity unlocks, in ANY mode:
+
+- **`my_tickets`** — list everything for the caller's email. Exists *only* for
+  verified identities: the anonymous API deliberately has no list-by-email,
+  because an unproven address would leak other people's ticket existence.
+- **`reply_ticket`** — reply to (and reopen) your own ticket from the portal.
+- **Verified tickets** — a signed-in submit records the proof; agents see ✓ in
+  the inbox (`requester_verified` on `list_tickets`/`get_ticket`). Verification
+  is a property of the *email* (`verified_emails` table), not the ticket row —
+  so the feature needed no schema migration.
+- **Agent role = admin access.** An email matching `AGENT_EMAILS`/`AGENT_DOMAINS`
+  gets `role=agent`, which satisfies the admin tier exactly like an admin key —
+  the same sign-in system serves customers *and* staff; nothing is
+  customer-only by construction. API keys remain as the machine credential.
+
+The session travels in the JSON body (`session` field) like the API keys (the
+anon FQDN's CORS preflight only allows `content-type`); the portal server keeps
+it in an **HttpOnly cookie** and injects it per request — it never exists in
+browser JS. Outbound mail is its own seam ([`lib/mailer.py`](lib/mailer.py)):
+`SEND_MODE=test` logs codes (and returns `demo_code` — demos with zero mail
+infra), `SEND_MODE=webhook` POSTs `{to,subject,text}` to `MAIL_WEBHOOK_URL`;
+swapping in SES/SendGrid is one function, like the CRM sample.
+
 ## Actions
 
 | action | tier | payload | does |
 |---|---|---|---|
-| `submit_ticket` | 🟢 public | subject, body, requester_email, channel | pure warehouse write, returns instantly with ticket_id + status token; LLM triage runs in the background (KB suggestions are the portal's separate `search_kb` call) |
-| `ticket_status` | 🟢 public | ticket_id, requester_email | your own ticket's status + messages (email must match; PII not echoed) |
+| `submit_ticket` | 🟢 public | subject, body, requester_email, channel | pure warehouse write, returns instantly with ticket_id + status token; LLM triage runs in the background (KB suggestions are the portal's separate `search_kb` call). Signed-in callers get `verified: true` |
+| `ticket_status` | 🟢 public | ticket_id, requester_email | your own ticket's status + messages (email must match — or comes from your session; PII not echoed) |
 | `search_kb` | 🟢 public | query, top_k | semantic KB search |
+| `auth_config` | 🟢 public | — | which AUTH_MODE is live (the portal shapes its UI from this) |
+| `request_code` / `verify_code` | 🟢 public | email / email, code | passwordless sign-in (AUTH_MODE=email): single-use 15-min code → signed session |
+| `whoami` | 🟢 public | session? | resolved identity, or `{anonymous: true}` |
+| `my_tickets` | 🟣 signed-in | session | all tickets for the caller's **proven** email |
+| `reply_ticket` | 🟣 signed-in | session, ticket_id, body | reply to your own ticket; reopens it if solved |
 | `create_ticket` | 🔒 admin | subject, body, requester_email, channel | agent-filed ticket with **inline** triage (staff can afford the wait) + KB + duplicate hints |
 | `add_message` | 🔒 admin | ticket_id, role, author, body | append message (S3 + row); agent reply sets `first_response_at` |
 | `triage` | 🔒 admin | ticket_id | (re)classify category/priority/sentiment via LLM |
@@ -209,9 +282,10 @@ dodil auth service-account delete <uuid> # don't leave a dangling credential
 | `export_tickets` | 🔒 admin | same filters as list | CSV export |
 | `create_key` / `list_keys` / `revoke_key` | 🔒 admin | kind?, label? / — / revoke | manage project + admin keys at runtime |
 
-Keys ride in the request **body** (`key` field); the portals inject them
-server-side so browsers never carry them. Runtime keys (the `api_keys` table)
-merge with the env keys.
+Keys and sessions ride in the request **body** (`key` / `session` fields); the
+portals inject them server-side so browsers never carry them. Runtime keys (the
+`api_keys` table) merge with the env keys. 🔒 admin actions accept an admin key
+OR an agent-role identity.
 
 ## Performance (measured on dev)
 
@@ -242,6 +316,8 @@ continuously).
 | `search_kb` empty right after `add_kb` | embedding takes ~20–30 s; the portal polls for exactly this reason. |
 | tickets stuck on `other/normal` | background triage is failing — check the model-403 row above, then `dodil ignite app logs <org>:support-desk-public`. |
 | bootstrap "already exists" but inserts fail | a pre-existing `tickets`/`messages`/`api_keys` table with a different schema; drop it (`dodil k3 table delete <t> -b support-desk`) and re-invoke. |
+| sign-in codes always "invalid or expired" | remember the warehouse normalizes row-written timestamps to `YYYY-MM-DD HH:MM:SS` (no `T`/`Z`) — compare normalized values, never raw ISO strings (see `verify_code` in [`lib/identity.py`](lib/identity.py); we hit exactly this live). |
+| signed in but `my_tickets` 401s | the two backends must share the same `SESSION_SECRET` (each deploy replaces the whole env map — redeploy both). |
 
 ## Notes
 

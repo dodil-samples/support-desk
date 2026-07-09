@@ -60,7 +60,8 @@ async function loadInbox() {
       <td>${statusPill(t.status)}</td>
       <td><span class="dot" style="background:${PRIORITY[t.priority] || "var(--accent)"}"></span> ${esc(t.priority)}</td>
       <td>${esc(t.category)}</td>
-      <td class="muted">${esc(t.requester_email)}</td>
+      <td class="muted">${esc(t.requester_email)}${t.requester_verified
+        ? ` <span title="requester proved this email" style="color:var(--good)">✓</span>` : ""}</td>
       <td class="muted">${esc((t.created_at || "").slice(0, 16).replace("T", " "))}</td></tr>`).join("")
       : `<tr><td colspan="6" class="muted">No tickets for this filter.</td></tr>`);
   document.querySelectorAll("tr.t").forEach((tr) =>
