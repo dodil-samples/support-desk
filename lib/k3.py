@@ -18,6 +18,8 @@ from __future__ import annotations
 import json
 import os
 import time
+import urllib.parse
+from xml.etree import ElementTree
 
 from . import auth, http
 
@@ -98,6 +100,35 @@ class K3:
         if status >= 300:
             raise K3Error(f"GET object {key} -> HTTP {status}")
         return data
+
+    def list_objects(self, prefix: str = "") -> list[dict]:
+        """List objects under a prefix — [{key, size, last_modified}].
+
+        The endpoint speaks S3 ListObjectsV2, which answers in XML; parse it
+        with stdlib ElementTree (namespace-agnostic via the localname match)."""
+        q = f"?list-type=2&prefix={urllib.parse.quote(prefix)}" if prefix else "?list-type=2"
+        status, data = http.request(
+            "GET", f"{BASE}/{self.bucket}{q}", headers=self._headers(""), timeout=30)
+        if status >= 300:
+            raise K3Error(f"LIST objects {prefix!r} -> HTTP {status}")
+        out = []
+        try:
+            root = ElementTree.fromstring(data)
+            for el in root.iter():
+                if el.tag.rsplit("}", 1)[-1] == "Contents":
+                    row = {c.tag.rsplit("}", 1)[-1]: (c.text or "") for c in el}
+                    out.append({"key": row.get("Key", ""),
+                                "size": int(row.get("Size") or 0),
+                                "last_modified": row.get("LastModified", "")})
+        except ElementTree.ParseError:
+            pass  # empty/odd body — treat as no objects
+        return out
+
+    def delete_object(self, key: str) -> None:
+        status, _ = http.request(
+            "DELETE", f"{BASE}/{self.bucket}/{key}", headers=self._headers(""), timeout=30)
+        if status >= 300 and status != 404:
+            raise K3Error(f"DELETE object {key} -> HTTP {status}")
 
     # -- warehouse (SQL tables) --------------------------------------------
     def create_table(self, name: str, columns: list[dict],

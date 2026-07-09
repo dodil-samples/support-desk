@@ -43,6 +43,16 @@ PUBLIC_ACTIONS = {
     "my_tickets", "reply_ticket",
 }
 
+# Inside the private tier there are two levels: AGENTS work tickets, ADMINS
+# additionally manage the desk itself. The raw admin KEY (a machine credential)
+# covers both; a signed-in human's level comes from their `agents` row.
+ADMIN_ONLY_ACTIONS = {
+    "create_key", "list_keys", "revoke_key",              # key management
+    "add_agent", "update_agent", "remove_agent",          # staff registry
+    "upsert_rule", "delete_rule",                         # routing rules
+    "remove_kb",                                          # KB deletion (add/list is agent work)
+}
+
 # Which tier this deployment serves. The realistic layout is TWO apps over one
 # codebase: APP_ROLE=public (customer backend — PUBLIC_ACTIONS only, anon FQDN)
 # and APP_ROLE=admin (agent backend — every action, fail-closed on ADMIN_KEYS).
@@ -108,27 +118,39 @@ def _resolve_keys(k3) -> tuple[set[str], set[str], bool, bool]:
 def authorize(k3, action: str, payload: dict, identity: dict | None = None) -> dict:
     """Decide whether ``action`` may run given the key on the payload.
 
-    Admin keys are a superset of public — an admin key satisfies any tier.
-    Keys are the MACHINE credential (widgets, webhooks, the inbox proxy); a
-    resolved human identity (lib/identity.py) works alongside them: a signed-in
-    user passes the public tier without a project key, and an ``agent``-role
-    identity satisfies the admin tier exactly like an admin key.
+    Admin keys are a superset of public — an admin key satisfies any tier and
+    level. Keys are the MACHINE credential (widgets, webhooks, the inbox proxy);
+    a resolved human identity (lib/identity.py) works alongside them: a
+    signed-in user passes the public tier without a project key, staff
+    identities (role agent/admin, from the agents registry or bootstrap env)
+    pass the private tier, and ADMIN_ONLY_ACTIONS additionally require the
+    admin level (key or admin identity).
     Returns ``{"ok": bool, "role": str, "error": str?}``.
     """
     provided = str(payload.get("key") or payload.get("admin_key") or payload.get("public_key") or "")
     admin, public, admin_configured, public_configured = _resolve_keys(k3)
-    is_admin = bool(provided) and provided in admin
-    is_agent = bool(identity) and identity.get("role") == "agent"
+    is_admin_key = bool(provided) and provided in admin
+    ident_role = (identity or {}).get("role", "")
+    is_admin_ident = ident_role == "admin"
+    is_agent_ident = ident_role in ("admin", "agent")
     is_public = bool(provided) and provided in public
-    role = "admin" if (is_admin or is_agent) else "public" if is_public else \
+    role = "admin" if (is_admin_key or is_admin_ident) else \
+           "agent" if is_agent_ident else "public" if is_public else \
            "user" if identity else "anon"
 
     if is_public_action(action):
-        if (not public_configured) or is_public or is_admin or bool(identity):
+        if (not public_configured) or is_public or is_admin_key or bool(identity):
             return {"ok": True, "role": role}
         return {"ok": False, "role": role, "error": "a valid project key is required (payload.key)"}
-    # PRIVATE
-    if is_admin or is_agent:
+    # PRIVATE — two levels: admin-only actions need the key or an admin identity;
+    # the rest of the tier is open to any staff identity (agent or admin).
+    if action in ADMIN_ONLY_ACTIONS:
+        if is_admin_key or is_admin_ident:
+            return {"ok": True, "role": role}
+        if is_agent_ident:
+            return {"ok": False, "role": role,
+                    "error": "admin role required for this action (agents can't manage the desk)"}
+    elif is_admin_key or is_agent_ident:
         return {"ok": True, "role": role}
     if not admin_configured:
         # A dedicated admin backend must never run open — the graceful default

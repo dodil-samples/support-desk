@@ -15,13 +15,20 @@ input:
       # PUBLIC (anon-safe): submit_ticket, ticket_status, search_kb
       # PUBLIC identity (lib/identity.py): auth_config, request_code, verify_code,
       #   whoami — plus my_tickets / reply_ticket, which require a signed-in session
-      # PRIVATE (admin key OR agent-role identity): create_ticket, add_message,
-      #   triage, suggest_reply, add_kb, get_ticket, list_tickets, set_status,
-      #   assign, rate, stats, export_tickets, create_key, list_keys, revoke_key
+      # PRIVATE, staff level (admin key OR any staff identity): create_ticket,
+      #   add_message, triage, suggest_reply, add_kb/list_kb/get_kb, get_ticket,
+      #   list_tickets, set_status, assign, rate, stats, export_tickets,
+      #   list_agents, list_rules
+      # PRIVATE, admin-only (ADMIN_ONLY_ACTIONS in lib/gate.py): add_agent,
+      #   update_agent, remove_agent, upsert_rule, delete_rule, remove_kb,
+      #   create_key, list_keys, revoke_key
       enum: [submit_ticket, ticket_status, search_kb,
              auth_config, request_code, verify_code, whoami, my_tickets, reply_ticket,
-             create_ticket, add_message, triage, suggest_reply, add_kb,
+             create_ticket, add_message, triage, suggest_reply,
+             add_kb, list_kb, get_kb, remove_kb,
              get_ticket, list_tickets, set_status, assign, rate, stats, export_tickets,
+             list_agents, add_agent, update_agent, remove_agent,
+             list_rules, upsert_rule, delete_rule,
              create_key, list_keys, revoke_key]
     key:
       type: string
@@ -77,8 +84,10 @@ env:
   - MAIL_WEBHOOK_URL # email mode + SEND_MODE=webhook: POST {to,subject,text} here
   - OIDC_ISSUER     # oidc mode: issuer URL; tokens validated via its userinfo endpoint
   - PROXY_SECRET    # header mode: shared secret the auth proxy asserts identities with
-  - AGENT_EMAILS    # comma-separated emails promoted to the agent role
-  - AGENT_DOMAINS   # comma-separated domains promoted to the agent role
+  - AGENT_EMAILS    # bootstrap admins (comma-separated emails) — real staff live in the agents table
+  - AGENT_DOMAINS   # bootstrap admin domains (comma-separated)
+  # Routing engine (actions/routing.py):
+  - ROUTING         # rules (default) | ai (model picks within rule pools) | off
 
 test_input:
   action: create_ticket

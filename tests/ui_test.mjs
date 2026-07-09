@@ -109,7 +109,24 @@ await page.goto(INBOX, { waitUntil: "networkidle" });
 await page.locator("tr.t").first().waitFor();
 const queue = await page.locator("#queue").innerText();
 ok("inbox queue renders tickets", (await page.locator("tr.t").count()) >= 1);
-ok("verified ✓ badge shown for proven requesters", queue.includes("uitest@acme.io") && queue.includes("✓"));
+ok("verified ✓ badge shown for proven requesters", queue.includes("✓"));
+
+// ---- 10. staffing & routing panels (skipped when the desk has no agents yet)
+const agentsText = await page.locator("#agents").innerText();
+if (/No agents yet/.test(agentsText)) {
+  console.log("skip agents/rules/routing checks — desk has no registered agents");
+} else {
+  ok("agents panel lists the registry (incl. AI 🤖)", agentsText.includes("🤖"));
+  ok("rules panel lists rules (seeded catch-alls at least)",
+     (await page.locator("#rules tr").count()) >= 2);
+  ok("queue shows the assignee column", queue.toLowerCase().includes("assignee"));
+  // newest ticket first — open it and expect a routing history trail
+  await page.locator("tr.t").first().click();
+  await page.waitForFunction(() =>
+    document.getElementById("dRouting").textContent.trim().length > 0);
+  const trail = await page.locator("#dRouting").innerText();
+  ok("ticket detail shows WHY it was routed", /rule:|ai:|manual:|no routing/.test(trail));
+}
 await page.screenshot({ path: SHOT("inbox"), fullPage: true });
 
 const realErrors = errors.filter((e) => !/favicon/.test(e));

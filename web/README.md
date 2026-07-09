@@ -4,8 +4,8 @@ The UI is split the way a real ticketing product is:
 
 | | portal | backend it talks to | who |
 |---|---|---|---|
-| [`portal/`](portal/) | **Help center** — KB search + deflection, instant ticket submission, check-my-ticket, CRM inbound-email webhook | public backend (`APP_ROLE=public`) | customers, anonymous |
-| [`admin/`](admin/) | **Agent inbox** — stats, queue, ticket detail with AI reply drafts, status/assign, key management | admin backend (`APP_ROLE=admin`) | agents, admin key |
+| [`portal/`](portal/) | **Help center** — KB search + deflection, instant ticket submission, check-my-ticket, optional sign-in (my tickets + replies), CRM inbound-email webhook | public backend (`APP_ROLE=public`) | customers, anonymous or signed-in |
+| [`admin/`](admin/) | **Agent inbox** — stats, queue with assignees, ticket detail with AI drafts + routing history, staff registry (human & AI agents), routing rules, knowledge base, key management | admin backend (`APP_ROLE=admin`) | staff (admin key or agent sign-in) |
 
 Both are zero-build static pages, each served by its own zero-dependency node
 server that proxies `POST /api` to its backend with the right key injected

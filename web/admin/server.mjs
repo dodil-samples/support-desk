@@ -37,6 +37,9 @@ const ACTIONS = new Set([
   "list_tickets", "get_ticket", "stats", "add_message", "triage", "suggest_reply",
   "set_status", "assign", "rate", "export_tickets", "add_kb", "create_ticket",
   "create_key", "list_keys", "revoke_key",
+  "add_agent", "update_agent", "remove_agent", "list_agents",
+  "upsert_rule", "delete_rule", "list_rules",
+  "list_kb", "get_kb", "remove_kb",
   "search_kb", "ticket_status", "submit_ticket",
 ]);
 

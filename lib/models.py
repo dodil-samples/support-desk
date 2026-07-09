@@ -35,14 +35,16 @@ def _unwrap(data: object) -> object:
     return data
 
 
-def chat(messages: list[dict], max_tokens: int = 2500) -> str:
+def chat(messages: list[dict], max_tokens: int = 2500, model: str | None = None) -> str:
     """One chat completion; returns the assistant's text.
+
+    `model` overrides CHAT_MODEL per call (AI agents may pin their own model).
 
     NB: reasoning models (e.g. kimi-k2.6) spend tokens on hidden `reasoningContent`
     BEFORE emitting `content`, so the budget must cover reasoning + answer or
     `content` comes back empty (finish_reason=length). Keep this generous.
     """
-    payload = {"model": CHAT_MODEL, "messages": messages, "max_tokens": max_tokens}
+    payload = {"model": model or CHAT_MODEL, "messages": messages, "max_tokens": max_tokens}
     headers = {"Authorization": f"Bearer {_bearer()}", "Content-Type": "application/json"}
     status, data = http.request_json(
         "POST", f"{BASE}/chat/completions", headers=headers, json_body=payload, timeout=90
@@ -57,13 +59,13 @@ def chat(messages: list[dict], max_tokens: int = 2500) -> str:
         return (data.get("content") if isinstance(data, dict) else str(data)) or ""
 
 
-def chat_json(system: str, user: str, max_tokens: int = 2000) -> dict:
+def chat_json(system: str, user: str, max_tokens: int = 2000, model: str | None = None) -> dict:
     """Chat that must return strict JSON; parses it, tolerating code fences.
 
     Budget covers a reasoning model's think-then-answer (600 truncated kimi's
     reasoning and left an empty answer)."""
     txt = chat([{"role": "system", "content": system},
-                {"role": "user", "content": user}], max_tokens=max_tokens)
+                {"role": "user", "content": user}], max_tokens=max_tokens, model=model)
     s = txt.strip()
     if s.startswith("```"):
         s = s.split("```", 2)[1] if "```" in s[3:] else s.strip("`")

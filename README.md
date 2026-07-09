@@ -20,15 +20,30 @@ support-desk-public                      support-desk-admin
    │                                       export · add_kb · key mgmt
    └────────────── one codebase ───────────┘
                        │
-              handler.py (router on `action`)
-                 ├─ lib/gate.py     public/private tiers + APP_ROLE + API keys
-                 ├─ lib/identity.py WHO is calling — AUTH_MODE adapter seam (none/email/oidc/header)
-                 ├─ lib/mailer.py   send_email(to,subject,text) — provider-agnostic seam
-                 ├─ lib/auth.py     service account ─► bearer (OIDC client_credentials)
-                 ├─ lib/k3.py       objects · tables (_execute/insert/merge) · vector/search
-                 ├─ lib/models.py   /v1/chat/completions · /v1/embeddings
-                 └─ bootstrap.py    idempotent bucket + tables + kb collection
+              handler.py — the ENTRYPOINT only: parse → identify → gate → dispatch
+                 │
+                 ├─ actions/   WHAT the product does (1 file per domain = README table)
+                 │    ├─ tickets.py   submit/status/reply/my_tickets · agent work · export
+                 │    ├─ routing.py   rules → round-robin/AI pick → AI agents work → escalate
+                 │    ├─ triage.py    LLM classify + the background chain (triage → route)
+                 │    ├─ kb.py        search_kb · add_kb · grounded reply drafting
+                 │    ├─ admin.py     staff registry (human+AI) · routing rules · stats
+                 │    └─ common.py    STATUSES enum · SLA targets · SQL/time helpers
+                 ├─ lib/       HOW it talks to things
+                 │    ├─ gate.py      public/private tiers + admin level + API keys
+                 │    ├─ identity.py  WHO is calling — AUTH_MODE adapters (none/email/oidc/header)
+                 │    ├─ agents.py    cached staff registry (the `agents` table)
+                 │    ├─ mailer.py    send_email(to,subject,text) — provider-agnostic seam
+                 │    ├─ auth.py      service account ─► bearer (OIDC client_credentials)
+                 │    ├─ k3.py        objects · tables (_execute/insert/merge) · vector/search
+                 │    └─ models.py    /v1/chat/completions · /v1/embeddings
+                 ├─ bootstrap.py  idempotent bucket + 8 tables + kb collection + seed rules
+                 └─ tests/       offline smoke suites + the live Playwright journey
 ```
+
+> Customizing this with a coding agent? **[AGENTS.md](AGENTS.md)** is the
+> protocol: the interview questions to ask, where each answer lands, and the
+> verification steps.
 
 Design principles this sample demonstrates:
 
@@ -47,6 +62,10 @@ Design principles this sample demonstrates:
   system (OIDC IdP, auth proxy) or the built-in passwordless email sign-in —
   see [Sign-in: plug in any auth](#sign-in-plug-in-any-auth-auth_mode). The
   default is `none`: everything below works with zero identity config.
+- **Rules route, AI works, humans catch.** Staff is data (`agents` table —
+  humans AND AI agents), routing rules are rows (first match wins, seeded
+  catch-alls), AI agents answer from the KB or escalate to humans with a
+  logged reason — see [Agents & routing](#agents--routing-humans-ai-rules).
 
 ---
 
@@ -180,9 +199,21 @@ curl -X POST $INBOX/api -H 'content-type: application/json' -d \
 
 Embedding takes ~20–30 s, then `search_kb` returns semantic hits (measured
 score ≈0.84 for a matching query; ~2 s warm, up to ~25 s on the very first
-query while the fresh vector collection loads). The portal's deflection search
-and the inbox's ✨ *Draft with AI* (`suggest_reply`, grounded in KB hits) both
-work from this.
+query while the fresh vector collection loads). The portal's deflection search,
+the inbox's ✨ *Draft with AI* (`suggest_reply`), and the AI agents' answers are
+all grounded in these articles.
+
+Day-to-day KB management lives in the inbox's **Knowledge base panel**
+(publish / read / delete — `add_kb`/`list_kb`/`get_kb` are staff actions,
+`remove_kb` is admin-only). Under the hood an article is just an object under
+`kb/` in the bucket with an ingest rule embedding `kb/**` — so you can also
+bulk-load files without touching the app at all:
+
+```bash
+dodil k3 object create support-desk kb/sso-setup.md --file ./docs/sso-setup.md
+# any file the ingest pipeline can read; the periodic sync (or add_kb's
+# trigger) embeds it into the same collection
+```
 
 ### 6. Optional: turn on sign-in (verified end-to-end with Playwright)
 
@@ -200,14 +231,42 @@ SESSION_SECRET=$(openssl rand -hex 24)
 The portal now grows a **Your account** card (email → code → signed in), a
 **My tickets** list, and in-portal replies; the inbox marks proven requesters
 with ✓. Signed-in flow measured live: code verify <1 s, submit still ~0.7 s.
-The whole browser journey is scripted in [`web/ui_test.mjs`](web/ui_test.mjs)
-(Playwright — 19 checks, run live against this deployment):
+The whole browser journey is scripted in [`tests/ui_test.mjs`](tests/ui_test.mjs)
+(Playwright — 23 checks, run live against this deployment):
 
 ```bash
-PORTAL_URL=$PORTAL INBOX_URL=$INBOX node web/ui_test.mjs
+PORTAL_URL=$PORTAL INBOX_URL=$INBOX node tests/ui_test.mjs
 ```
 See [Sign-in: plug in any auth](#sign-in-plug-in-any-auth-auth_mode) for the
 OIDC / auth-proxy adapters and how mail leaves in production.
+
+### 7. Staff the desk: agents + routing rules (verified live)
+
+Register humans and AI agents, then map categories to them — all rows, no
+redeploys (the inbox has panels for all of this; curls shown for the recipe):
+
+```bash
+J='content-type: application/json'
+# two humans (one with a billing skill) and one AI agent for how-to questions
+curl -X POST $INBOX/api -H "$J" -d '{"action":"add_agent","kind":"human","email":"amal@acme-support.io","name":"Amal","role":"agent","skills":["billing"]}'
+curl -X POST $INBOX/api -H "$J" -d '{"action":"add_agent","kind":"human","email":"tarek@acme-support.io","name":"Tarek","role":"agent"}'
+curl -X POST $INBOX/api -H "$J" -d '{"action":"add_agent","kind":"ai","name":"KB Bot","skills":["how_to"]}'
+# rules: how_to → the AI agent; billing → the billing-skilled human pool
+curl -X POST $INBOX/api -H "$J" -d '{"action":"upsert_rule","position":1,"on_event":"created","category":"how_to","assign_to":"kb-bot","allow_ai":true}'
+curl -X POST $INBOX/api -H "$J" -d '{"action":"upsert_rule","position":2,"on_event":"created","category":"billing","pool_skill":"billing"}'
+```
+
+Then watch the machine run (all three measured live on this deployment):
+
+- *"How do I export my invoices to CSV?"* → triage `how_to` → rule 1 → **KB Bot
+  answers from the KB** within ~10 s (a real agent message; status `pending`,
+  `first_response_at` set).
+- *"I was charged twice this month"* → triage `billing` → rule 2 → **Amal**
+  (skill pool, round-robin), who gets a notification email through the mail seam.
+- *"How do I connect my telescope?"* → rule 1 → KB Bot → self-assesses that the
+  KB doesn't cover telescopes → **escalates** → default escalation rule →
+  **Tarek**. The inbox ticket detail shows the whole trail under *Routing
+  history*.
 
 ### Teardown
 
@@ -258,6 +317,40 @@ browser JS. Outbound mail is its own seam ([`lib/mailer.py`](lib/mailer.py)):
 infra), `SEND_MODE=webhook` POSTs `{to,subject,text}` to `MAIL_WEBHOOK_URL`;
 swapping in SES/SendGrid is one function, like the CRM sample.
 
+## Agents & routing (humans, AI, rules)
+
+The industry pipeline — Zendesk-style triggers→routing with Freshdesk-style
+assignment modes — as data on K3:
+
+- **One staff registry, two kinds.** `agents` rows are `human` (agent_id = the
+  email the identity seam looks roles up by; role `admin` manages the desk,
+  `agent` works tickets) or `ai` (an internal actor with skills, an optional
+  model override, and a `confidence_threshold` where 1 = always escalate —
+  handy for demoing the path). Manage them from the inbox Agents panel.
+- **Rules are rows, first match wins.** Per event (`created` /
+  `customer_reply` / `escalation`), match on the triage enums
+  (category/priority/channel, '' = any), then either name an agent or define a
+  pool (skill filter + whether AI agents are eligible). Bootstrap seeds
+  catch-all round-robin rules at position 9999 so routing works the moment the
+  first agent exists. `ROUTING=off|rules|ai` env: in `ai` mode the model picks
+  the best fit *within the rule's pool* (skills + open load) — rules are the
+  guardrails, AI is judgment inside them, never above them.
+- **AI agents actually work tickets.** Assigned an AI agent, the ticket gets a
+  KB-grounded draft + honest self-assessment: confident → a real agent reply
+  (sets `first_response_at` — it IS a first response; status `pending`); not
+  confident → **escalation** with the model's reason. Loop safety is hard-coded:
+  one AI auto-touch per ticket, escalation pools never include AI, and a
+  customer reply on an AI-assigned ticket goes to humans.
+- **Every decision is audited** in `routing_log`
+  (`rule:<id>` / `ai:<agent>` / `manual:<who>` + reason) and rendered as
+  *Routing history* in the inbox — agents always see WHY a ticket is theirs.
+- **Assignment notifies the human** through the mail seam (best-effort).
+- **Round-robin = longest-since-last-assigned** (Zendesk's semantics), tracked
+  on the agent row.
+
+Everything here runs in the background enrichment chain (triage → route → maybe
+AI answer) — the customer's submit stays a sub-second pure write.
+
 ## Actions
 
 | action | tier | payload | does |
@@ -274,18 +367,25 @@ swapping in SES/SendGrid is one function, like the CRM sample.
 | `add_message` | 🔒 admin | ticket_id, role, author, body | append message (S3 + row); agent reply sets `first_response_at` |
 | `triage` | 🔒 admin | ticket_id | (re)classify category/priority/sentiment via LLM |
 | `suggest_reply` | 🔒 admin | ticket_id | KB vector search → LLM-drafted grounded reply |
-| `add_kb` | 🔒 admin | title, body | store + embed a KB article |
+| `add_kb` / `list_kb` / `get_kb` | 🔒 staff | title, body / — / kb_key | publish, list, read KB articles (objects under `kb/`) |
+| `remove_kb` | 🔴 admin-only | kb_key | delete an article (index drops it on the next sync) |
 | `get_ticket` | 🔒 admin | ticket_id | ticket + its messages |
 | `list_tickets` | 🔒 admin | status?/category?/assignee?/priority?/limit? | warehouse filter (status must be in the enum) |
 | `set_status` / `assign` / `rate` | 🔒 admin | ticket_id (+status/assignee/csat) | mutate ticket (`status` must be in the enum) |
 | `stats` | 🔒 admin | — | open-by-priority, by-category, volume/day, CSAT, first-response p90, SLA |
 | `export_tickets` | 🔒 admin | same filters as list | CSV export |
-| `create_key` / `list_keys` / `revoke_key` | 🔒 admin | kind?, label? / — / revoke | manage project + admin keys at runtime |
+| `list_agents` / `list_rules` | 🔒 staff | — | the registry and the routing rules (read-only for agents) |
+| `add_agent` / `update_agent` / `remove_agent` | 🔴 admin-only | kind, email/name, role, skills… | manage the staff registry (human + AI) |
+| `upsert_rule` / `delete_rule` | 🔴 admin-only | position, on_event, matchers, assign_to/pool | manage routing rules |
+| `create_key` / `list_keys` / `revoke_key` | 🔴 admin-only | kind?, label? / — / revoke | manage project + admin keys at runtime |
 
 Keys and sessions ride in the request **body** (`key` / `session` fields); the
 portals inject them server-side so browsers never carry them. Runtime keys (the
-`api_keys` table) merge with the env keys. 🔒 admin actions accept an admin key
-OR an agent-role identity.
+`api_keys` table) merge with the env keys. The private tier has two levels:
+🔒 **staff** actions accept the admin key or ANY staff identity (role
+agent/admin); 🔴 **admin-only** actions (`ADMIN_ONLY_ACTIONS` in
+[`lib/gate.py`](lib/gate.py)) additionally require the admin level — a plain
+agent gets `"admin role required"`. All the other 🔒 rows above are staff-level.
 
 ## Performance (measured on dev)
 
@@ -296,14 +396,33 @@ OR an agent-role identity.
 | background triage lands (`moonshot-v1-auto`) | ≤5 s after submit |
 | `search_kb` warm / first query on idle collection | ~2 s / up to ~25 s |
 | `suggest_reply` (draft grounded in KB) | ~4–8 s |
+| routing decision (rules + round-robin) lands | with triage, ≤10 s after submit |
+| AI agent's KB-grounded answer (or escalation) | ~5–10 s after routing |
 
-Two env knobs: **`MODEL_NAME`** (default `moonshot-v1-auto`; a reasoning model
+Env knobs: **`MODEL_NAME`** (default `moonshot-v1-auto`; a reasoning model
 like `kimi-k2.6` writes richer drafts but takes ~25–35 s *per call* — with
-background triage that only slows admin actions, never the public form) and
-**`K3_VECTOR_TIMEOUT`** (default `20` s per attempt, tried twice; `5`–`8` is a
-friendlier ceiling now that the portal polls instead of waiting). For a
-demo-snappy public backend keep a warm replica: `--reserved 1` (billed
+background triage that only slows admin actions, never the public form),
+**`ROUTING`** (`rules` default | `ai` adds a model pick within rule pools |
+`off`) and **`K3_VECTOR_TIMEOUT`** (default `20` s per attempt, tried twice;
+`5`–`8` is a friendlier ceiling now that the portal polls instead of waiting).
+For a demo-snappy public backend keep a warm replica: `--reserved 1` (billed
 continuously).
+
+## Customizing (it's meant to be forked)
+
+- **Theme/branding:** each portal is a single static page with CSS design
+  tokens in its `:root` block (`web/*/index.html`) — colors, fonts, dark mode —
+  plus a `<title>` and header. No build step; edit, redeploy the portal.
+- **Enums:** status lives in `actions/common.py`, triage categories/priorities
+  in the `actions/triage.py` prompt; the UIs and `info.yaml` mirror them
+  (labeled mirrors — grep the old value when you change one).
+- **Seams:** identity adapters (`lib/identity.py`), mail provider
+  (`lib/mailer.py`), models (`lib/models.py`) — extend the seam, don't inline
+  providers elsewhere.
+- **With a coding agent:** [`AGENTS.md`](AGENTS.md) is a question-driven
+  customization protocol — the agent interviews you (auth mode, staffing,
+  rules, branding, models), applies the answers to the right files/envs, and
+  runs the verification suites.
 
 ## Troubleshooting
 
@@ -318,6 +437,8 @@ continuously).
 | bootstrap "already exists" but inserts fail | a pre-existing `tickets`/`messages`/`api_keys` table with a different schema; drop it (`dodil k3 table delete <t> -b support-desk`) and re-invoke. |
 | sign-in codes always "invalid or expired" | remember the warehouse normalizes row-written timestamps to `YYYY-MM-DD HH:MM:SS` (no `T`/`Z`) — compare normalized values, never raw ISO strings (see `verify_code` in [`lib/identity.py`](lib/identity.py); we hit exactly this live). |
 | signed in but `my_tickets` 401s | the two backends must share the same `SESSION_SECRET` (each deploy replaces the whole env map — redeploy both). |
+| routing_log says assigned but the ticket shows unassigned | concurrent UPDATEs to one row are last-writer-wins on the FULL row — a stale-snapshot commit (e.g. a customer reply racing the background chain) can erase another column's write. The engine write-verifies assignments and retries once (`route_ticket` in [`actions/routing.py`](actions/routing.py)); do the same for any concurrent row writes you add. |
+| ticket stuck on an AI agent with no reply | the AI answers once, then must escalate — check `routing_log` for its reason, and confirm an `escalation` rule with a non-empty human pool exists (bootstrap seeds one at position 9999). |
 
 ## Notes
 

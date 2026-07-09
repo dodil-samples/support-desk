@@ -18,11 +18,16 @@ and ``AUTH_MODE`` env picks the adapter that produces it:
           proxy terminates auth and asserts the identity it established with
           a shared secret. Needs PROXY_SECRET.
 
-Role mapping is adapter-independent: a verified email is a ``user``; it is
-promoted to ``agent`` when it matches AGENT_EMAILS (comma-separated) or
-AGENT_DOMAINS (comma-separated domains) — so the SAME sign-in system serves
-customers and staff; nothing is customer-only by construction. An ``agent``
-identity satisfies the admin tier in lib/gate.py exactly like an admin key.
+Role mapping is adapter-independent and comes from two places:
+  1. the ``agents`` table (lib/agents.py) — the real staff registry, managed at
+     runtime: a registered active human agent gets its row's role
+     (``admin`` = manage agents/rules/keys, ``agent`` = work tickets);
+  2. AGENT_EMAILS / AGENT_DOMAINS env — the BOOTSTRAP credential (like
+     ADMIN_KEYS): matching emails are ``admin``, so the first operator can sign
+     in and register everyone else before any agents rows exist.
+Everyone else is a ``user``. The same sign-in system serves customers and
+staff; nothing is customer-only by construction. Staff identities satisfy the
+private tier in lib/gate.py (admins additionally pass the admin-only actions).
 
 The session/token travels in the JSON body (field ``session``), same as API
 keys — the anon FQDN's CORS preflight only allows content-type, and the portal
@@ -41,7 +46,7 @@ import secrets
 import threading
 import time
 
-from . import http, mailer
+from . import agents, http, mailer
 
 AUTH_MODE = os.getenv("AUTH_MODE", "none").strip().lower()
 SESSION_SECRET = os.getenv("SESSION_SECRET", "")
@@ -63,17 +68,20 @@ def _norm_email(v) -> str:
     return str(v or "").strip().lower()
 
 
-def role_for(email: str) -> str:
+def role_for(k3, email: str) -> str:
     email = _norm_email(email)
+    registered = agents.role_of_email(k3, email)  # the runtime staff registry wins
+    if registered:
+        return registered
     if email in _AGENT_EMAILS or email.split("@")[-1] in _AGENT_DOMAINS:
-        return "agent"
+        return "admin"  # bootstrap operators — they register the real agents
     return "user"
 
 
-def _identity(email: str, name: str = "", verified: bool = True) -> dict:
+def _identity(k3, email: str, name: str = "", verified: bool = True) -> dict:
     email = _norm_email(email)
     return {"email": email, "name": name or email.split("@")[0],
-            "role": role_for(email), "verified": verified, "mode": AUTH_MODE}
+            "role": role_for(k3, email), "verified": verified, "mode": AUTH_MODE}
 
 
 # ------------------------------------------------------------- signed sessions (email mode)
@@ -96,7 +104,7 @@ def mint_session(email: str, name: str = "") -> str:
     return f"sd1.{_b64(payload)}.{_sign(payload)}"
 
 
-def _check_session(token: str) -> dict | None:
+def _check_session(k3, token: str) -> dict | None:
     try:
         prefix, body, sig = token.split(".")
         if prefix != "sd1":
@@ -107,7 +115,9 @@ def _check_session(token: str) -> dict | None:
         claims = json.loads(payload)
         if int(claims.get("x", 0)) < time.time():
             return None
-        return _identity(claims["e"], claims.get("n", ""))
+        # Sessions carry the proven EMAIL only; the role is resolved per request
+        # from the live registry, so promoting/demoting an agent applies instantly.
+        return _identity(k3, claims["e"], claims.get("n", ""))
     except Exception:
         return None
 
@@ -120,7 +130,8 @@ def _code_hash(email: str, code: str) -> str:
 # ------------------------------------------------------------------ OIDC userinfo adapter
 # Validate the presented bearer by asking the ISSUER who it belongs to. One HTTP
 # call instead of local JWT verification: no crypto dependency, works with opaque
-# tokens, and revocation is honored. Cached per-token for a minute.
+# tokens, and revocation is honored. Userinfo is cached per-token for a minute;
+# the ROLE is composed fresh each call from the live registry.
 _oidc_lock = threading.Lock()
 _oidc_conf: dict | None = None
 _oidc_cache: dict[str, tuple[float, dict | None]] = {}
@@ -136,26 +147,26 @@ def _userinfo_endpoint() -> str:
         return _oidc_conf.get("userinfo_endpoint", "")
 
 
-def _oidc_identity(token: str) -> dict | None:
+def _oidc_userinfo(token: str) -> dict | None:
     cached = _oidc_cache.get(token)
     if cached and cached[0] > time.time():
         return cached[1]
-    ident = None
+    info_out = None
     endpoint = _userinfo_endpoint()
     if endpoint:
         status, info = http.request_json(
             "GET", endpoint, headers={"Authorization": f"Bearer {token}"}, timeout=10)
         if status < 300 and isinstance(info, dict) and info.get("email"):
-            ident = _identity(info["email"], info.get("name", ""),
-                              verified=bool(info.get("email_verified", True)))
+            info_out = {"email": info["email"], "name": info.get("name", ""),
+                        "verified": bool(info.get("email_verified", True))}
     if len(_oidc_cache) > 512:  # bound the per-replica cache
         _oidc_cache.clear()
-    _oidc_cache[token] = (time.time() + 60, ident)
-    return ident
+    _oidc_cache[token] = (time.time() + 60, info_out)
+    return info_out
 
 
 # --------------------------------------------------------------------------- the seam
-def identify(payload: dict) -> dict | None:
+def identify(k3, payload: dict) -> dict | None:
     """Resolve the caller's identity from the request payload, or None (anonymous).
 
     Never raises — an unusable credential is just anonymous, and the action
@@ -164,15 +175,16 @@ def identify(payload: dict) -> dict | None:
     try:
         if AUTH_MODE == "email":
             token = str(payload.get("session") or "")
-            return _check_session(token) if token and SESSION_SECRET else None
+            return _check_session(k3, token) if token and SESSION_SECRET else None
         if AUTH_MODE == "oidc":
             token = str(payload.get("session") or payload.get("token") or "")
-            return _oidc_identity(token) if token and OIDC_ISSUER else None
+            info = _oidc_userinfo(token) if token and OIDC_ISSUER else None
+            return _identity(k3, info["email"], info["name"], info["verified"]) if info else None
         if AUTH_MODE == "header":
             asserted = _norm_email(payload.get("proxy_email"))
             ok = PROXY_SECRET and hmac.compare_digest(
                 str(payload.get("proxy_secret") or ""), PROXY_SECRET)
-            return _identity(asserted, str(payload.get("proxy_name") or "")) if ok and asserted else None
+            return _identity(k3, asserted, str(payload.get("proxy_name") or "")) if ok and asserted else None
         return None  # AUTH_MODE=none
     except Exception:
         return None
@@ -271,7 +283,7 @@ def verify_code(k3, p: dict) -> dict:
     cid = str(live[0]["code_id"]).replace("'", "''")
     k3.execute(f"UPDATE login_codes SET used=1 WHERE code_id='{cid}'")  # single-use
     mark_verified(k3, email)
-    ident = _identity(email)
+    ident = _identity(k3, email)
     return {"session": mint_session(email), "identity": ident,
             "expires_in_hours": SESSION_TTL_HOURS}
 

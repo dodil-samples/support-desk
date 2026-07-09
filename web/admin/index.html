@@ -75,6 +75,7 @@
     <span class="badge">admin portal</span>
     <span class="spacer"></span>
     <select id="statusFilter"></select>
+    <select id="assigneeFilter"><option value="">all agents</option></select>
     <button id="refresh">↻ Refresh</button>
   </header>
 
@@ -110,11 +111,70 @@
       </div>
       <div class="row" style="margin-top:12px">
         <select id="dStatus"></select>
-        <input id="dAssignee" placeholder="assignee" style="width:140px" />
+        <select id="dAssignee" style="min-width:150px"><option value="">unassigned</option></select>
         <button id="dUpdate">Update</button>
+      </div>
+      <div style="margin-top:12px">
+        <div class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.03em;margin-bottom:4px">Routing history</div>
+        <div id="dRouting" class="muted" style="font-size:12px"></div>
       </div>
     </section>
   </div>
+
+  <div class="split">
+    <section class="card">
+      <h2>Agents — human &amp; AI</h2>
+      <div class="row" style="margin-bottom:8px">
+        <select id="aKind"><option value="human">human</option><option value="ai">AI agent</option></select>
+        <input id="aEmail" type="email" placeholder="email" style="width:170px" />
+        <select id="aRole"><option value="agent">agent</option><option value="admin">admin</option></select>
+        <input id="aName" class="hidden" placeholder="name (e.g. KB Bot)" style="width:150px" />
+        <input id="aSkills" placeholder="skills, e.g. billing,how_to" style="width:170px" />
+        <button class="primary" id="aAdd">Add</button>
+        <span class="muted" id="aHint"></span>
+      </div>
+      <div style="overflow:auto"><table id="agents"></table></div>
+    </section>
+
+    <section class="card">
+      <h2>Routing rules <span class="muted" style="text-transform:none">(first match wins; '' = any)</span></h2>
+      <div class="row" style="margin-bottom:8px">
+        <input id="rPos" type="number" placeholder="pos" style="width:64px" value="100" title="lower wins" />
+        <select id="rEvent"><option>created</option><option>customer_reply</option><option>escalation</option></select>
+        <select id="rCategory"></select>
+        <select id="rPriority"></select>
+        <select id="rAssign"><option value="">→ pool (round-robin)</option></select>
+        <select id="rSkill"><option value="">any skill</option></select>
+        <label class="muted" style="font-size:12px"><input type="checkbox" id="rAllowAi" /> allow AI</label>
+        <button class="primary" id="rAdd">Add rule</button>
+        <span class="muted" id="rHint"></span>
+      </div>
+      <div style="overflow:auto"><table id="rules"></table></div>
+    </section>
+  </div>
+
+  <section class="card">
+    <h2>Knowledge base <span class="muted" style="text-transform:none">(powers deflection, ✨ drafts &amp; AI agents)</span></h2>
+    <div class="split">
+      <div>
+        <div style="overflow:auto"><table id="kb"></table></div>
+        <pre class="out hidden" id="kbView"></pre>
+      </div>
+      <div>
+        <input id="kbTitle" placeholder="Article title" style="width:100%;margin-bottom:6px" />
+        <textarea id="kbBody" placeholder="Markdown body — what should agents & the AI answer with?"></textarea>
+        <div class="row" style="margin-top:6px">
+          <button class="primary" id="kbAdd">Publish article</button>
+          <span class="muted" id="kbHint"></span>
+        </div>
+        <p class="muted" style="font-size:12px;margin-bottom:0">
+          Articles are objects under <code>kb/</code> in the bucket — files dropped there
+          directly (<code>dodil k3 object create &lt;bucket&gt; kb/&lt;name&gt;.md --file …</code>)
+          are embedded too. Indexing takes ~20–30&nbsp;s.
+        </p>
+      </div>
+    </div>
+  </section>
 
   <section class="card">
     <h2>API keys</h2>
