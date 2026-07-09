@@ -250,9 +250,13 @@ class K3:
             return []
         out = []
         for m in data.get("results") or []:
+            # K3 /vector/search nests the source key at results[].object.key; reading a
+            # bare m["key"] yields None → every hit is dropped and search silently
+            # degrades to keyword. Accept both shapes.
+            key = (m.get("object") or {}).get("key") or m.get("key") or ""
             out.append({
-                "text": (m.get("content") or m.get("text") or m.get("key") or "").strip(),
-                "key": m.get("key"),
+                "text": (m.get("content") or m.get("text") or "").strip(),
+                "key": key,
                 "score": m.get("score"),
             })
         return out
